@@ -1,19 +1,14 @@
 ﻿using System.Text.Json.Serialization;
 
 namespace ChzzkApi_CS;
-public interface IChzzkResponse
-{
-    int Code { get; }
-    string? Message { get; }
-}
-public record ChzzkResponse<T>(
-    [property: JsonPropertyName("code")] int Code,
-    [property: JsonPropertyName("message")] string? Message,
-    [property: JsonPropertyName("content")] T? Content) : IChzzkResponse;
-
 public record ChzzkResponse(
     [property: JsonPropertyName("code")] int Code,
-    [property: JsonPropertyName("message")] string? Message) : IChzzkResponse;
+    [property: JsonPropertyName("message")] string? Message);
+
+public record ChzzkResponse<T>(
+    int Code,
+    string? Message,
+    [property: JsonPropertyName("content")] T? Content) : ChzzkResponse(Code, Message);
 
 public record TokenContent(
     [property: JsonPropertyName("accessToken")] string AccessToken,

@@ -205,8 +205,8 @@ public class ChzzkApi
     {
         var response = await SendWithClientAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth/client", ct);
 
-        if (response.Content!.Url is null)
-            throw new InvalidOperationException("Client URL was not present in the session creation response.");
+        if (response.Code != ChzzkApiException.StatusCode.Success)
+            throw new ChzzkApiException(response);
 
         return new ChzzkSession(this, new Uri(response.Content!.Url));
     }

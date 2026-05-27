@@ -30,7 +30,7 @@ public record ChatProfile(
     [property: JsonPropertyName("nickname")] string Nickname,
     [property: JsonPropertyName("badges")] List<Badge> Badges,
     [property: JsonPropertyName("verifiedMark")] bool VerifiedMark,
-    [property: JsonPropertyName("userRoleCode")] string UserRoleCode);
+    [property: JsonPropertyName("userRoleCode")] UserRoleCode UserRoleCode);
 
 public record ChatMessage(
     [property: JsonPropertyName("channelId")] string ChannelId,
@@ -65,4 +65,13 @@ public enum EventType
     [JsonStringEnumMemberName("CHAT")] Chat,
     [JsonStringEnumMemberName("DONATION")] Donation,
     [JsonStringEnumMemberName("SUBSCRIPTION")] Subscription
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<UserRoleCode>))]
+public enum UserRoleCode
+{
+    [JsonStringEnumMemberName("streamer")] Streamer,
+    [JsonStringEnumMemberName("common_user")] CommonUser,
+    [JsonStringEnumMemberName("streaming_channel_manager")] StreamingChannelManager,
+    [JsonStringEnumMemberName("streaming_chat_manager")] StreamingChatManager
 }
