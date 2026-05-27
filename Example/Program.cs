@@ -9,91 +9,79 @@ using System.Text.Json.Serialization;
 
 namespace Example;
 
+record AppConfig(
+    [property: JsonPropertyName("clientId")] string ClientId,
+    [property: JsonPropertyName("clientSecret")] string ClientSecret,
+    [property: JsonPropertyName("accessToken")] string? AccessToken = null,
+    [property: JsonPropertyName("refreshToken")] string? RefreshToken = null);
+
 internal static class Program
 {
     const string ConfigFile = "config.json";
     const string RedirectUri = "http://localhost:8080/api/path/";
 
-    static async Task Main(string[] args)
+    static ChzzkApi api;
+    static AppConfig config;
+
+    static Program()
     {
-        var config = TryLoadJson<AppConfig>(ConfigFile)
+
+        config = TryLoadJson<AppConfig>(ConfigFile)
             ?? CreateDefaultConfig(ConfigFile);
 
         var services = new ServiceCollection();
         services.AddChzzkApiClient();
 
-        var api = services.BuildServiceProvider()
+        api = services.BuildServiceProvider()
             .GetRequiredService<ChzzkApi.Factory>()
             .Create(config.ClientId, config.ClientSecret);
-
-        await RunAsync(api, config);
     }
 
-    static async Task RunAsync(ChzzkApi api, AppConfig config)
+    static async Task Main(string[] args)
     {
         if (config.AccessToken is null)
-            config = await RunOAuthFlowAsync(api, config);
+            await RunOAuthFlowAsync();
 
         Console.WriteLine($"Access Token: {config.AccessToken}");
 
         var session = await api.CreateClientAsync();
         await session.ConnectAsync();
 
-        var subscribeRes = await session.SubscribeEventAsync(config.AccessToken!, EventType.Chat);
-
-        if (subscribeRes.Code == ChzzkApiException.StatusCode.Unauthorized)
-        {
-            if (config.RefreshToken is not null)
-            {
-                var refreshed = await api.RefreshAccessTokenAsync(config.RefreshToken);
-
-                if (refreshed.Code == ChzzkApiException.StatusCode.Unauthorized)
-                    config = await RunOAuthFlowAsync(api, config);
-                else if (refreshed.Code != ChzzkApiException.StatusCode.Success)
-                    throw new ChzzkApiException(refreshed);
-                else
-                {
-                    config = config with
-                    {
-                        AccessToken = refreshed.Content!.AccessToken,
-                        RefreshToken = refreshed.Content!.RefreshToken
-                    };
-                    SaveJson(ConfigFile, config);
-                }
-            }
-            else
-            {
-                config = await RunOAuthFlowAsync(api, config);
-            }
-
-            subscribeRes = await session.SubscribeEventAsync(config.AccessToken!, EventType.Chat);
-        }
-
-        if (subscribeRes.Code != ChzzkApiException.StatusCode.Success)
-            throw new ChzzkApiException(subscribeRes);
+        var subscribeRes = await CallWithAuthAsync(() => session.SubscribeEventAsync(config.AccessToken!, EventType.Chat));
 
         Console.WriteLine($"Subscribe: {subscribeRes.Code} {subscribeRes.Message}");
+
+        session.ChatReceived += (msg) => Console.WriteLine(msg.Content);
 
         var sessions = await api.GetClientSessionList();
         Console.WriteLine("=== Client Sessions ===");
         foreach (var s in sessions)
         {
-            Console.WriteLine($"  Key:          {s.SessionKey}");
-            Console.WriteLine($"  Connected:    {s.ConnectedDate}");
-            Console.WriteLine($"  Disconnected: {s.DisconnectedDate}");
+            Console.WriteLine($"Key: {s.SessionKey,14}");
+            Console.WriteLine($"Connected: {s.ConnectedDate,14}");
+            Console.WriteLine($"Disconnected: {s.DisconnectedDate,14}");
             foreach (var ev in s.SubscribedEvents)
-                Console.WriteLine($"    Event: {ev.EventType} / Channel: {ev.ChannelId}");
+                Console.WriteLine($"Event: {ev.EventType} / Channel: {ev.ChannelId}");
         }
 
         Console.WriteLine("Press 'q' to quit.");
         while (Console.ReadLine()?.Equals("q", StringComparison.OrdinalIgnoreCase) != true) { }
 
         await session.UnsubscribeEventAsync(config.AccessToken, EventType.Chat);
-        await api.RevokeAccessTokenAsync(config.AccessToken);
         await session.DisposeAsync();
     }
 
-    static async Task<AppConfig> RunOAuthFlowAsync(ChzzkApi api, AppConfig config)
+    static void UpdateTokens(TokenContent tokens)
+    {
+        config = config with
+        {
+            AccessToken = tokens.AccessToken,
+            RefreshToken = tokens.RefreshToken
+        };
+        SaveJson(ConfigFile, config);
+    }
+
+    static async Task RunOAuthFlowAsync()
     {
         var authUri = api.GetAuthorizationUri(RedirectUri, out string state);
         OpenUrl(authUri);
@@ -103,13 +91,35 @@ internal static class Program
         if (issued.Code != ChzzkApiException.StatusCode.Success)
             throw new ChzzkApiException(issued);
 
-        var updated = config with
+        UpdateTokens(issued.Content!);
+        return;
+    }
+
+    static async Task<T> CallWithAuthAsync<T>(Func<Task<T>> apiCall)
+        where T : ChzzkResponse
+    {
+        var response = await apiCall();
+
+        if (response.Code == ChzzkApiException.StatusCode.Success)
+            return response;
+        if (response.Code != ChzzkApiException.StatusCode.Unauthorized)
+            throw new ChzzkApiException(response);
+
+
+        var refreshed = await api.RefreshAccessTokenAsync(config.RefreshToken!);
+
+        if (refreshed.Code == ChzzkApiException.StatusCode.Success)
         {
-            AccessToken = issued.Content!.AccessToken,
-            RefreshToken = issued.Content!.RefreshToken
-        };
-        SaveJson(ConfigFile, updated);
-        return updated;
+            UpdateTokens(refreshed.Content!);
+            return await apiCall();
+        }
+        if (refreshed.Code != ChzzkApiException.StatusCode.Unauthorized)
+            throw new ChzzkApiException(refreshed);
+
+
+        await RunOAuthFlowAsync();
+
+        return await apiCall();
     }
 
     static AppConfig CreateDefaultConfig(string path)
@@ -151,9 +161,4 @@ internal static class Program
         }
     }
 
-    record AppConfig(
-        [property: JsonPropertyName("clientId")] string ClientId,
-        [property: JsonPropertyName("clientSecret")] string ClientSecret,
-        [property: JsonPropertyName("accessToken")] string? AccessToken = null,
-        [property: JsonPropertyName("refreshToken")] string? RefreshToken = null);
 }
