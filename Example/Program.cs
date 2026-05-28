@@ -53,21 +53,24 @@ internal static class Program
 
         session.ChatReceived += (msg) => Console.WriteLine(msg.Content);
 
-        var sessions = await api.GetClientSessionList();
-        Console.WriteLine("=== Client Sessions ===");
-        foreach (var s in sessions)
+        var sessions = await api.GetClientSessionListAsync();
+        if (sessions.Code == ChzzkStatusCode.Success)
         {
-            Console.WriteLine($"Key: {s.SessionKey,14}");
-            Console.WriteLine($"Connected: {s.ConnectedDate,14}");
-            Console.WriteLine($"Disconnected: {s.DisconnectedDate,14}");
-            foreach (var ev in s.SubscribedEvents)
-                Console.WriteLine($"Event: {ev.EventType} / Channel: {ev.ChannelId}");
+            Console.WriteLine("=== Client Sessions ===");
+            foreach (var s in sessions.Content!.Data)
+            {
+                Console.WriteLine($"Key: {s.SessionKey,14}");
+                Console.WriteLine($"Connected: {s.ConnectedDate,14}");
+                Console.WriteLine($"Disconnected: {s.DisconnectedDate,14}");
+                foreach (var ev in s.SubscribedEvents)
+                    Console.WriteLine($"   Event: {ev.EventType} / Channel: {ev.ChannelId}");
+            }
         }
-
+        
         Console.WriteLine("Press 'q' to quit.");
         while (Console.ReadLine()?.Equals("q", StringComparison.OrdinalIgnoreCase) != true) { }
 
-        await session.UnsubscribeEventAsync(config.AccessToken, EventType.Chat);
+        await CallWithAuthAsync(() => session.UnsubscribeEventAsync(config.AccessToken!, EventType.Chat));
         await session.DisposeAsync();
     }
 
@@ -88,7 +91,7 @@ internal static class Program
         var code = await ChzzkApi.WaitForAuthorizationCodeAsync(RedirectUri, state);
 
         var issued = await api.IssueAccessTokenAsync(code, state);
-        if (issued.Code != ChzzkApiException.StatusCode.Success)
+        if (issued.Code != ChzzkStatusCode.Success)
             throw new ChzzkApiException(issued);
 
         UpdateTokens(issued.Content!);
@@ -100,20 +103,20 @@ internal static class Program
     {
         var response = await apiCall();
 
-        if (response.Code == ChzzkApiException.StatusCode.Success)
+        if (response.Code == ChzzkStatusCode.Success)
             return response;
-        if (response.Code != ChzzkApiException.StatusCode.Unauthorized)
+        if (response.Code != ChzzkStatusCode.Unauthorized)
             throw new ChzzkApiException(response);
 
 
         var refreshed = await api.RefreshAccessTokenAsync(config.RefreshToken!);
 
-        if (refreshed.Code == ChzzkApiException.StatusCode.Success)
+        if (refreshed.Code == ChzzkStatusCode.Success)
         {
             UpdateTokens(refreshed.Content!);
             return await apiCall();
         }
-        if (refreshed.Code != ChzzkApiException.StatusCode.Unauthorized)
+        if (refreshed.Code != ChzzkStatusCode.Unauthorized)
             throw new ChzzkApiException(refreshed);
 
 

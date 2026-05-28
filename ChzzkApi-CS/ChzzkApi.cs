@@ -1,13 +1,11 @@
 ﻿using ChzzkApi_CS.Session;
 using Microsoft.AspNetCore.WebUtilities;
-using SocketIOClient;
 using System.Collections.Specialized;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
-using System.Web;
 
 namespace ChzzkApi_CS;
 
@@ -173,7 +171,7 @@ public class ChzzkApi
     #endregion Authorization
     #region Session
 
-    public async Task<List<SessionInfo>> GetClientSessionList(int size = 20, string page = "0")
+    public async Task<ChzzkResponse<SessionListData>> GetClientSessionListAsync(int size = 20, string page = "0", CancellationToken ct = default)
     {
         var uri = QueryHelpers.AddQueryString("/open/v1/sessions/client",
             new Dictionary<string, string?>
@@ -182,12 +180,12 @@ public class ChzzkApi
                 ["page"] = page
             });
 
-        var response = await SendWithClientAsync<SessionListData>(HttpMethod.Get, uri);
+        var response = await SendWithClientAsync<SessionListData>(HttpMethod.Get, uri, ct);
 
-        return response.Content?.Data ?? new List<SessionInfo>();
+        return response;
     }
 
-    public async Task<List<SessionInfo>> GetUserSessionList(string accessToken, int size = 20, string page = "0")
+    public async Task<ChzzkResponse<SessionListData>> GetUserSessionListAsync(string accessToken, int size = 20, string page = "0", CancellationToken ct = default)
     {
         var uri = QueryHelpers.AddQueryString("/open/v1/sessions",
             new Dictionary<string, string?>
@@ -196,16 +194,16 @@ public class ChzzkApi
                 ["page"] = page
             });
 
-        var response = await SendWithAccessTokenAsync<SessionListData>(HttpMethod.Get, uri, accessToken);
+        var response = await SendWithAccessTokenAsync<SessionListData>(HttpMethod.Get, uri, accessToken, ct);
 
-        return response.Content?.Data ?? new List<SessionInfo>();
+        return response;
     }
 
     public async Task<ChzzkSession> CreateClientAsync(CancellationToken ct = default)
     {
         var response = await SendWithClientAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth/client", ct);
 
-        if (response.Code != ChzzkApiException.StatusCode.Success)
+        if (response.Code != ChzzkStatusCode.Success)
             throw new ChzzkApiException(response);
 
         return new ChzzkSession(this, new Uri(response.Content!.Url));
@@ -215,13 +213,41 @@ public class ChzzkApi
     {
         var response = await SendWithAccessTokenAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth", accessToken, ct);
 
-        if (response.Content!.Url is null)
-            throw new InvalidOperationException("Client URL was not present in the session creation response.");
+        if (response.Code != ChzzkStatusCode.Success)
+            throw new ChzzkApiException(response);
 
         return new ChzzkSession(this, new Uri(response.Content!.Url));
     }
 
     #endregion Session
+    #region User
+
+    public async Task<ChzzkResponse<UserInfo>> GetUserInfoAsync(string accessToken, CancellationToken ct = default)
+    {
+        var response = await SendWithAccessTokenAsync<UserInfo>(HttpMethod.Get, "/open/v1/users/me", accessToken, ct);
+
+        return response;
+    }
+
+    #endregion User
+    #region Channel
+    /*
+    public async Task<ChzzkResponse<ChannelInfo>> GetChannelInfoAsync(string accessToken, CancellationToken ct = default)
+    {
+        var response = await SendWithAccessTokenAsync<ChannelInfo>(HttpMethod.Get, "/open/v1/channels", accessToken, ct);
+
+        return response;
+    }
+    */
+    #endregion Channel
+    #region Category
+    #endregion Category
+    #region Live
+    #endregion Live
+    #region Chat
+    #endregion Chat
+    #region Restriction
+    #endregion Restriction
 
     public Task<ChzzkResponse<T>> SendWithAccessTokenAsync<T>(HttpMethod method, string requestUri, string accessToken, CancellationToken ct = default)
     {

@@ -16,3 +16,6 @@ public record TokenContent(
     [property: JsonPropertyName("tokenType")] string TokenType,
     [property: JsonPropertyName("expiresIn")] int ExpiresIn,
     [property: JsonPropertyName("scope")] string Scope);
+public record UserInfo(
+    [property: JsonPropertyName("channelId")] string ChannelId,
+    [property: JsonPropertyName("channelName")] string ChannelName);
