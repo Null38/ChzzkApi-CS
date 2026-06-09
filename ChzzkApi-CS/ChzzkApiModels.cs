@@ -19,3 +19,6 @@ public record TokenContent(
 public record UserInfo(
     [property: JsonPropertyName("channelId")] string ChannelId,
     [property: JsonPropertyName("channelName")] string ChannelName);
+
+public record ChatMessageContent(
+    [property: JsonPropertyName("messageId")] string MessageId);

@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.WebUtilities;
 using SocketIOClient;
+using System.Net.Http.Json;
 using System.Text.Json;
 using System.Web;
 
@@ -7,7 +8,6 @@ namespace ChzzkApi_CS.Session;
 
 public partial class ChzzkSession : IAsyncDisposable
 {
-    ChzzkApi api;
     readonly SocketIO socket;
 
     public string SessionKey { get; private set; } = string.Empty;
@@ -21,10 +21,8 @@ public partial class ChzzkSession : IAsyncDisposable
     public event Action<DonationMessage>? DonationReceived;
     public event Action<SubscriptionMessage>? SubscriptionReceived;
 
-    public ChzzkSession(ChzzkApi api, Uri uri)
+    public ChzzkSession(Uri uri)
     {
-        this.api = api;
-
         socket = new SocketIO(uri,
         new SocketIOOptions
         {
@@ -52,20 +50,18 @@ public partial class ChzzkSession : IAsyncDisposable
         await socket.DisconnectAsync();
     }
 
-    public Task<ChzzkResponse> SubscribeEventAsync(string accessToken, EventType eventType)
+    public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUserApi api, EventType eventType)
     {
-        var uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{ToPathSegment(eventType)}",
-            new Dictionary<string, string?> { ["sessionKey"] = SessionKey });
+        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{ToPathSegment(eventType)}", "sessionKey", SessionKey);
 
-        return api.SendWithAccessTokenAsync(HttpMethod.Post, uri, accessToken);
+        return api.PostUserAsync(uri, null);
     }
 
-    public Task<ChzzkResponse> UnsubscribeEventAsync(string accessToken, EventType eventType)
+    public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUserApi api, EventType eventType)
     {
-        var uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{ToPathSegment(eventType)}",
-            new Dictionary<string, string?> { ["sessionKey"] = SessionKey });
+        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{ToPathSegment(eventType)}", "sessionKey", SessionKey);
 
-        return api.SendWithAccessTokenAsync(HttpMethod.Post, uri, accessToken);
+        return api.PostUserAsync(uri, null);
     }
 
     private static string ToPathSegment(EventType eventType) => eventType switch
@@ -108,6 +104,8 @@ public partial class ChzzkSession : IAsyncDisposable
 
     Task OnChat(IEventContext response)
     {
+        Console.WriteLine(response.RawText);
+
         if (response.GetValue<JsonElement>(0).GetString() is not string payload)
             return Task.CompletedTask;
 
