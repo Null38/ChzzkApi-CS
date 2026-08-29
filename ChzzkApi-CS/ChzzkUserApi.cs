@@ -12,6 +12,9 @@ public class ChzzkUserApi
     public string AccessToken { get; private set; }
     public string RefreshToken { get; private set; }
 
+    readonly object refreshGate = new();
+    Task<ChzzkResponse<TokenContent>>? refreshTask;
+
     public ChzzkUserApi(ChzzkClientApi clientApi, string accessToken, string refreshToken)
     {
         ClientApi = clientApi;
@@ -40,17 +43,35 @@ public class ChzzkUserApi
 
     #region Authorization
 
-    public async Task<ChzzkResponse<TokenContent>> RefreshAccessTokenAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Refreshes the token pair. Concurrent callers share a single request, because a refresh
+    /// token is consumed by the first exchange and a second one would be rejected.
+    /// </summary>
+    public Task<ChzzkResponse<TokenContent>> RefreshAccessTokenAsync(CancellationToken ct = default)
     {
-        var response = await ClientApi.RefreshAccessTokenAsync(RefreshToken, ct);
+        lock (refreshGate)
+            return refreshTask ??= RefreshCoreAsync(ct);
+    }
 
-        if (response.Code == ChzzkStatusCode.Success)
+    private async Task<ChzzkResponse<TokenContent>> RefreshCoreAsync(CancellationToken ct)
+    {
+        try
         {
-            AccessToken = response.Content!.AccessToken;
-            RefreshToken = response.Content.RefreshToken;
-        }
+            var response = await ClientApi.RefreshAccessTokenAsync(RefreshToken, ct).ConfigureAwait(false);
 
-        return response;
+            if (response.Code == ChzzkStatusCode.Success)
+            {
+                AccessToken = response.Content!.AccessToken;
+                RefreshToken = response.Content.RefreshToken;
+            }
+
+            return response;
+        }
+        finally
+        {
+            lock (refreshGate)
+                refreshTask = null;
+        }
     }
 
     public Task<ChzzkResponse> RevokeAccessTokenAsync(CancellationToken ct = default)
@@ -73,12 +94,13 @@ public class ChzzkUserApi
 
     public async Task<ChzzkSession> CreateSessionAsync(CancellationToken ct = default)
     {
-        var response = await GetUserAsync<SessionCreateContent>("/open/v1/sessions/auth", ct);
+        var response = await GetUserAsync<SessionCreateContent>("/open/v1/sessions/auth", ct).ConfigureAwait(false);
 
         if (response.Code != ChzzkStatusCode.Success)
             throw new ChzzkApiException(response);
 
-        return new ChzzkSession(new Uri(response.Content!.Url));
+        return new ChzzkSession(new Uri(response.Content!.Url),
+            (uri, token) => PostUserAsync(uri, null, token));
     }
 
     #endregion Session

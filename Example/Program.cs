@@ -58,7 +58,7 @@ internal static class Program
         var session = await userApi.CreateSessionAsync();
         await session.ConnectAsync();
 
-        var subscribeRes = await CallWithAuthAsync(() => session.SubscribeEventAsync(userApi, EventType.Chat));
+        var subscribeRes = await CallWithAuthAsync(() => session.SubscribeEventAsync(EventType.Chat));
         Console.WriteLine($"Subscribe: {subscribeRes.Code} {subscribeRes.Message}");
 
         session.ChatReceived += async (msg) =>
@@ -89,7 +89,7 @@ internal static class Program
         Console.WriteLine("Press 'q' to quit.");
         while (Console.ReadLine()?.Equals("q", StringComparison.OrdinalIgnoreCase) != true) { }
 
-        await CallWithAuthAsync(() => session.UnsubscribeEventAsync(userApi, EventType.Chat));
+        await CallWithAuthAsync(() => session.UnsubscribeEventAsync(EventType.Chat));
         await session.DisposeAsync();
     }
 
