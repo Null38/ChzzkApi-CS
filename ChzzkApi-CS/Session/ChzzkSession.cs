@@ -1,6 +1,5 @@
 ﻿using Microsoft.AspNetCore.WebUtilities;
 using SocketIOClient;
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Web;
 
@@ -104,13 +103,12 @@ public partial class ChzzkSession : IAsyncDisposable
 
     Task OnChat(IEventContext response)
     {
-        Console.WriteLine(response.RawText);
-
         if (response.GetValue<JsonElement>(0).GetString() is not string payload)
             return Task.CompletedTask;
 
         var message = JsonSerializer.Deserialize<ChatMessage>(payload);
-        if (message is not null) ChatReceived?.Invoke(message);
+        if (message is not null)
+            ChatReceived?.Invoke(message);
         return Task.CompletedTask;
     }
 
@@ -120,7 +118,8 @@ public partial class ChzzkSession : IAsyncDisposable
             return Task.CompletedTask;
 
         var message = JsonSerializer.Deserialize<DonationMessage>(payload);
-        if (message is not null) DonationReceived?.Invoke(message);
+        if (message is not null)
+            DonationReceived?.Invoke(message);
         return Task.CompletedTask;
     }
 
@@ -130,7 +129,8 @@ public partial class ChzzkSession : IAsyncDisposable
             return Task.CompletedTask;
 
         var message = JsonSerializer.Deserialize<SubscriptionMessage>(payload);
-        if (message is not null) SubscriptionReceived?.Invoke(message);
+        if (message is not null) 
+            SubscriptionReceived?.Invoke(message);
         return Task.CompletedTask;
     }
 

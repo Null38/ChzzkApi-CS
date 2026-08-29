@@ -20,8 +20,5 @@ public class ChzzkApiException : Exception
         Code = code;
     }
 
-    public ChzzkApiException(ChzzkResponse response) : base($"[{response.Code}] {response.Message ?? "Unknown error"}")
-    {
-        Code = response.Code;
-    }
+    public ChzzkApiException(ChzzkResponse response) : this(response.Code, response.Message) {}
 }

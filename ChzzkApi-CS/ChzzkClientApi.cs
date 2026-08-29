@@ -124,7 +124,7 @@ public class ChzzkClientApi
         }
     }
 
-    public async Task<ChzzkUserApi> IssueAccessTokenAsync(HttpClient client, string code, string state, CancellationToken ct = default)
+    public async Task<ChzzkUserApi> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
     {
         var requestBody = new
         {

@@ -112,7 +112,7 @@ internal static class Program
         OpenUrl(authUri);
         var code = await ChzzkClientApi.WaitForAuthorizationCodeAsync(RedirectUri, state);
 
-        userApi = await clientApi.IssueAccessTokenAsync(httpClientFactory.CreateClient(nameof(ChzzkUserApi)), code, state);
+        userApi = await clientApi.IssueAccessTokenAsync(code, state);
         UpdateTokens();
     }
 
