@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.WebUtilities;
 using System.Collections.Specialized;
 using System.Net;
+using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -10,14 +11,14 @@ namespace ChzzkApi_CS;
 
 public class ChzzkClientApi
 {
-    private HttpClient Client { get; init; }
+    private IHttpClientFactory ClientFactory { get; init; }
 
     public string ClientId { get; private set; }
     public string ClientSecret { get; private set; }
 
-    public ChzzkClientApi(HttpClient httpClient, string clientId, string clientSecret)
+    public ChzzkClientApi(IHttpClientFactory clientFactory, string clientId, string clientSecret)
     {
-        Client = httpClient;
+        ClientFactory = clientFactory;
         ClientId = clientId;
         ClientSecret = clientSecret;
     }
@@ -31,25 +32,15 @@ public class ChzzkClientApi
     
     public async Task<T> SendCoreAsync<T>(HttpRequestMessage request, CancellationToken ct)
     {
-        using var response = await Client.SendAsync(request, ct).ConfigureAwait(false);
+        var client = ClientFactory.CreateClient(nameof(ChzzkClientApi));
 
-        // Chzzk reports API-level failures inside the JSON envelope, so the HTTP status alone
-        // is not an error. Gateways and proxies, however, answer with HTML or an empty body.
-        string body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var response = await client.SendAsync(request, ct);
 
-        try
-        {
-            return JsonSerializer.Deserialize<T>(body)
-                ?? throw new ChzzkApiException((int)response.StatusCode, "Chzzk API returned an empty response body.");
-        }
-        catch (JsonException ex)
-        {
-            throw new ChzzkApiException((int)response.StatusCode, $"Chzzk API returned a non-JSON response: {Summarize(body)}", ex);
-        }
+        string body = await response.Content.ReadAsStringAsync(ct);
+
+        return JsonSerializer.Deserialize<T>(body)
+            ?? throw new InvalidOperationException("Chzzk API response deserialized to null.");
     }
-
-    private static string Summarize(string body)
-        => body.Length <= 200 ? body : $"{body[..200]}...";
 
     private Task<T> SendClientCoreAsync<T>(HttpRequestMessage request, CancellationToken ct = default)
     {
@@ -124,7 +115,7 @@ public class ChzzkClientApi
             var query = context.Request.QueryString;
 
             if (configureResponse != null)
-                await configureResponse(context.Response, query).ConfigureAwait(false);
+                await configureResponse(context.Response, query);
 
             context.Response.Close();
 
@@ -134,8 +125,7 @@ public class ChzzkClientApi
             if (query["error"] is string error)
                 throw new InvalidOperationException($"Authorization was denied: {error} {query["error_description"]}".TrimEnd());
 
-            return query["code"]
-                ?? throw new InvalidOperationException("Authorization callback carried no code.");
+            return query["code"]!;
         }
     }
 
@@ -153,7 +143,7 @@ public class ChzzkClientApi
             state = state
         };
 
-        var wrapper = await PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct).ConfigureAwait(false);
+        var wrapper = await PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct);
 
         if (wrapper.Code != ChzzkStatusCode.Success)
             throw new ChzzkApiException(wrapper);
@@ -199,18 +189,17 @@ public class ChzzkClientApi
                 ["page"] = page
             });
 
-        return await GetClientAsync<SessionListData>(uri, ct).ConfigureAwait(false);
+        return await GetClientAsync<SessionListData>(uri, ct);
     }
 
     public async Task<ChzzkSession> CreateSessionAsync(CancellationToken ct = default)
     {
-        var response = await GetClientAsync<SessionCreateContent>("/open/v1/sessions/auth/client", ct).ConfigureAwait(false);
+        var response = await GetClientAsync<SessionCreateContent>("/open/v1/sessions/auth/client", ct);
 
         if (response.Code != ChzzkStatusCode.Success)
             throw new ChzzkApiException(response);
 
-        return new ChzzkSession(new Uri(response.Content!.Url),
-            (uri, token) => PostClientAsync(uri, null, token));
+        return new ChzzkSession(new Uri(response.Content!.Url));
     }
 
     #endregion Session

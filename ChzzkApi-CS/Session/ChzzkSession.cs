@@ -8,29 +8,20 @@ namespace ChzzkApi_CS.Session;
 public class ChzzkSession : IAsyncDisposable
 {
     readonly SocketIO socket;
-    readonly Func<string, CancellationToken, Task<ChzzkResponse>> postEventAsync;
 
     TaskCompletionSource<string> connectTcs = CreateConnectSource();
 
     public string SessionKey { get; private set; } = string.Empty;
 
-    public event Func<EventData, Task>? EventSubscribed;
-    public event Func<EventData, Task>? EventUnsubscribed;
-    public event Func<EventData, Task>? EventRevoked;
-    public event Func<ChatMessage, Task>? ChatReceived;
-    public event Func<DonationMessage, Task>? DonationReceived;
-    public event Func<SubscriptionMessage, Task>? SubscriptionReceived;
+    public event Action<EventData>? EventSubscribed;
+    public event Action<EventData>? EventUnsubscribed;
+    public event Action<EventData>? EventRevoked;
+    public event Action<ChatMessage>? ChatReceived;
+    public event Action<DonationMessage>? DonationReceived;
+    public event Action<SubscriptionMessage>? SubscriptionReceived;
 
-    /// <summary>
-    /// Raised when a payload cannot be parsed or a handler throws. Socket callbacks have no
-    /// caller to propagate to, so failures surface here instead of tearing down the process.
-    /// </summary>
-    public event Action<Exception>? MessageFailed;
-
-    internal ChzzkSession(Uri uri, Func<string, CancellationToken, Task<ChzzkResponse>> postEventAsync)
+    internal ChzzkSession(Uri uri)
     {
-        this.postEventAsync = postEventAsync;
-
         socket = new SocketIO(uri,
         new SocketIOOptions
         {
@@ -41,8 +32,6 @@ public class ChzzkSession : IAsyncDisposable
             Query = HttpUtility.ParseQueryString(uri.Query)
         });
 
-        socket.OnDisconnected += OnDisconnected;
-
         socket.On("SYSTEM", OnSystem);
         socket.On("CHAT", OnChat);
         socket.On("DONATION", OnDonation);
@@ -52,129 +41,100 @@ public class ChzzkSession : IAsyncDisposable
     static TaskCompletionSource<string> CreateConnectSource()
         => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    /// <summary>
-    /// Connects and waits for the server to issue a session key.
-    /// </summary>
     public async Task ConnectAsync(CancellationToken ct = default)
     {
         var pending = connectTcs = CreateConnectSource();
 
-        await socket.ConnectAsync(ct).ConfigureAwait(false);
+        await socket.ConnectAsync(ct);
 
         using var registration = ct.Register(() => pending.TrySetCanceled(ct));
 
-        SessionKey = await pending.Task.ConfigureAwait(false);
+        SessionKey = await pending.Task;
     }
 
     public Task DisconnectAsync(CancellationToken ct = default) => socket.DisconnectAsync(ct);
 
-    public Task<ChzzkResponse> SubscribeEventAsync(EventType eventType, CancellationToken ct = default)
+    public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUserApi userApi, EventType eventType, CancellationToken ct = default)
     {
-        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{ToPathSegment(eventType)}", "sessionKey", SessionKey);
+        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
 
-        return postEventAsync(uri, ct);
+        return userApi.PostUserAsync(uri, null, ct);
     }
 
-    public Task<ChzzkResponse> UnsubscribeEventAsync(EventType eventType, CancellationToken ct = default)
+    public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUserApi userApi, EventType eventType, CancellationToken ct = default)
     {
-        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{ToPathSegment(eventType)}", "sessionKey", SessionKey);
+        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
 
-        return postEventAsync(uri, ct);
+        return userApi.PostUserAsync(uri, null, ct);
     }
 
-    private static string ToPathSegment(EventType eventType) => eventType switch
+    Task OnSystem(IEventContext response)
     {
-        EventType.Chat => "chat",
-        EventType.Donation => "donation",
-        EventType.Subscription => "subscription",
-        _ => throw new ArgumentOutOfRangeException(nameof(eventType), eventType, null)
-    };
+        if (response.GetValue<JsonElement>(0).GetString() is not string payload)
+            return Task.CompletedTask;
 
-    void OnDisconnected(object? sender, string reason)
-        => connectTcs.TrySetException(new ChzzkApiException(ChzzkStatusCode.InternalServerError, $"Session disconnected before a session key was issued: {reason}"));
-
-    async Task OnSystem(IEventContext response)
-    {
-        if (Parse<SystemMessage>(response) is not SystemMessage message)
-            return;
+        var message = JsonSerializer.Deserialize<SystemMessage>(payload);
+        if (message is null) return Task.CompletedTask;
 
         switch (message.Type)
         {
             case "connected":
-                if (message.Data.TryGetProperty("sessionKey", out var key) && key.GetString() is string sessionKey)
-                    connectTcs.TrySetResult(sessionKey);
+                var key = message.Data.GetProperty("sessionKey").GetString()!;
+                connectTcs.TrySetResult(key);
                 break;
             case "subscribed":
-                await InvokeAsync(EventSubscribed, ParseData(message.Data)).ConfigureAwait(false);
+                var subscribed = message.Data.Deserialize<EventData>();
+                if (subscribed is not null) EventSubscribed?.Invoke(subscribed);
                 break;
             case "unsubscribed":
-                await InvokeAsync(EventUnsubscribed, ParseData(message.Data)).ConfigureAwait(false);
+                var unsubscribed = message.Data.Deserialize<EventData>();
+                if (unsubscribed is not null) EventUnsubscribed?.Invoke(unsubscribed);
                 break;
             case "revoked":
-                await InvokeAsync(EventRevoked, ParseData(message.Data)).ConfigureAwait(false);
+                var revoked = message.Data.Deserialize<EventData>();
+                if (revoked is not null) EventRevoked?.Invoke(revoked);
                 break;
         }
+        return Task.CompletedTask;
     }
 
-    Task OnChat(IEventContext response) => InvokeAsync(ChatReceived, Parse<ChatMessage>(response));
-
-    Task OnDonation(IEventContext response) => InvokeAsync(DonationReceived, Parse<DonationMessage>(response));
-
-    Task OnSubscription(IEventContext response) => InvokeAsync(SubscriptionReceived, Parse<SubscriptionMessage>(response));
-
-    T? Parse<T>(IEventContext response)
+    Task OnChat(IEventContext response)
     {
-        try
-        {
-            if (response.GetValue<JsonElement>(0).GetString() is not string payload)
-                return default;
+        if (response.GetValue<JsonElement>(0).GetString() is not string payload)
+            return Task.CompletedTask;
 
-            return JsonSerializer.Deserialize<T>(payload);
-        }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException or IndexOutOfRangeException)
-        {
-            MessageFailed?.Invoke(ex);
-            return default;
-        }
+        var message = JsonSerializer.Deserialize<ChatMessage>(payload);
+        if (message is not null)
+            ChatReceived?.Invoke(message);
+        return Task.CompletedTask;
     }
 
-    EventData? ParseData(JsonElement data)
+    Task OnDonation(IEventContext response)
     {
-        try
-        {
-            return data.Deserialize<EventData>();
-        }
-        catch (JsonException ex)
-        {
-            MessageFailed?.Invoke(ex);
-            return null;
-        }
+        if (response.GetValue<JsonElement>(0).GetString() is not string payload)
+            return Task.CompletedTask;
+
+        var message = JsonSerializer.Deserialize<DonationMessage>(payload);
+        if (message is not null)
+            DonationReceived?.Invoke(message);
+        return Task.CompletedTask;
     }
 
-    async Task InvokeAsync<T>(Func<T, Task>? handlers, T? message)
+    Task OnSubscription(IEventContext response)
     {
-        if (handlers is null || message is null)
-            return;
+        if (response.GetValue<JsonElement>(0).GetString() is not string payload)
+            return Task.CompletedTask;
 
-        foreach (var handler in handlers.GetInvocationList().Cast<Func<T, Task>>())
-        {
-            try
-            {
-                await handler(message).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                MessageFailed?.Invoke(ex);
-            }
-        }
+        var message = JsonSerializer.Deserialize<SubscriptionMessage>(payload);
+        if (message is not null)
+            SubscriptionReceived?.Invoke(message);
+        return Task.CompletedTask;
     }
 
     public async ValueTask DisposeAsync()
     {
-        socket.OnDisconnected -= OnDisconnected;
-
         if (socket.Connected)
-            await socket.DisconnectAsync().ConfigureAwait(false);
+            await socket.DisconnectAsync();
 
         socket.Dispose();
     }
