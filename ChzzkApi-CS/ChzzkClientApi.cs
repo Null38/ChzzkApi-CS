@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.WebUtilities;
 using System.Collections.Specialized;
 using System.Net;
+using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -10,14 +11,14 @@ namespace ChzzkApi_CS;
 
 public class ChzzkClientApi
 {
-    private HttpClient Client { get; init; }
+    private IHttpClientFactory ClientFactory { get; init; }
 
     public string ClientId { get; private set; }
     public string ClientSecret { get; private set; }
 
-    public ChzzkClientApi(HttpClient httpClient, string clientId, string clientSecret)
+    public ChzzkClientApi(IHttpClientFactory clientFactory, string clientId, string clientSecret)
     {
-        Client = httpClient;
+        ClientFactory = clientFactory;
         ClientId = clientId;
         ClientSecret = clientSecret;
     }
@@ -31,12 +32,13 @@ public class ChzzkClientApi
     
     public async Task<T> SendCoreAsync<T>(HttpRequestMessage request, CancellationToken ct)
     {
-        using var response = await Client.SendAsync(request, ct);
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        var client = ClientFactory.CreateClient(nameof(ChzzkClientApi));
 
-        //Console.WriteLine(await response.Content.ReadAsStringAsync(ct));
+        using var response = await client.SendAsync(request, ct);
 
-        return await JsonSerializer.DeserializeAsync<T>(stream, cancellationToken: ct)
+        string body = await response.Content.ReadAsStringAsync(ct);
+
+        return JsonSerializer.Deserialize<T>(body)
             ?? throw new InvalidOperationException("Chzzk API response deserialized to null.");
     }
 
@@ -120,9 +122,15 @@ public class ChzzkClientApi
             if (query["state"] != expectedState)
                 continue;
 
+            if (query["error"] is string error)
+                throw new InvalidOperationException($"Authorization was denied: {error} {query["error_description"]}".TrimEnd());
+
             return query["code"]!;
         }
     }
+
+    private Task<T> PostAuthAsync<T>(string uri, object requestBody, CancellationToken ct)
+        => SendCoreAsync<T>(new HttpRequestMessage(HttpMethod.Post, uri) { Content = JsonContent.Create(requestBody) }, ct);
 
     public async Task<ChzzkUserApi> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
     {
@@ -134,13 +142,8 @@ public class ChzzkClientApi
             code = code,
             state = state
         };
-        
-        using var response = await Client.PostAsJsonAsync("/auth/v1/token", requestBody, ct);
 
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-
-        var wrapper = await JsonSerializer.DeserializeAsync<ChzzkResponse<TokenContent>>(stream, cancellationToken: ct)
-            ?? throw new InvalidOperationException("Chzzk API response deserialized to null.");
+        var wrapper = await PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct);
 
         if (wrapper.Code != ChzzkStatusCode.Success)
             throw new ChzzkApiException(wrapper);
@@ -148,7 +151,7 @@ public class ChzzkClientApi
         return new(this, wrapper.Content!.AccessToken, wrapper.Content.RefreshToken);
     }
 
-    public async Task<ChzzkResponse<TokenContent>> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)
+    public Task<ChzzkResponse<TokenContent>> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)
     {
         var requestBody = new
         {
@@ -158,17 +161,10 @@ public class ChzzkClientApi
             clientSecret = ClientSecret
         };
 
-        using var response = await Client.PostAsJsonAsync("/auth/v1/token", requestBody, ct);
-        
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-
-        var wrapper = await JsonSerializer.DeserializeAsync<ChzzkResponse<TokenContent>>(stream, cancellationToken: ct)
-            ?? throw new InvalidOperationException("Chzzk API response deserialized to null.");
-
-        return wrapper;
+        return PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct);
     }
 
-    public async Task<ChzzkResponse> RevokeAccessTokenAsync(string token, string tokenTypeHint = "access_token", CancellationToken ct = default)
+    public Task<ChzzkResponse> RevokeAccessTokenAsync(string token, string tokenTypeHint = "access_token", CancellationToken ct = default)
     {
         var requestBody = new
         {
@@ -178,15 +174,7 @@ public class ChzzkClientApi
             tokenTypeHint = tokenTypeHint
         };
 
-        using var response = await Client.PostAsJsonAsync("/auth/v1/token/revoke", requestBody, ct);
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-
-        var wrapper = await JsonSerializer.DeserializeAsync<ChzzkResponse>(stream, cancellationToken: ct);
-
-        if (wrapper is null)
-            throw new InvalidOperationException("Chzzk API response deserialized to null.");
-
-        return wrapper;
+        return PostAuthAsync<ChzzkResponse>("/auth/v1/token/revoke", requestBody, ct);
     }
 
     #endregion Authorization
@@ -201,9 +189,7 @@ public class ChzzkClientApi
                 ["page"] = page
             });
 
-        var response = await GetClientAsync<SessionListData>(uri, ct);
-
-        return response;
+        return await GetClientAsync<SessionListData>(uri, ct);
     }
 
     public async Task<ChzzkSession> CreateSessionAsync(CancellationToken ct = default)

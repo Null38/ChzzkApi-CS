@@ -15,7 +15,8 @@ public class ChzzkApiException : Exception
 {
     public int Code { get; }
 
-    public ChzzkApiException(int code, string? message) : base($"[{code}] {message ?? "Unknown error"}")
+    public ChzzkApiException(int code, string? message)
+        : base($"[{code}] {message ?? "Unknown error"}")
     {
         Code = code;
     }

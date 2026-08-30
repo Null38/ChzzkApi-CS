@@ -5,13 +5,13 @@ using System.Web;
 
 namespace ChzzkApi_CS.Session;
 
-public partial class ChzzkSession : IAsyncDisposable
+public class ChzzkSession : IAsyncDisposable
 {
     readonly SocketIO socket;
 
-    public string SessionKey { get; private set; } = string.Empty;
+    TaskCompletionSource<string> connectTcs = CreateConnectSource();
 
-    readonly TaskCompletionSource<string> connectTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public string SessionKey { get; private set; } = string.Empty;
 
     public event Action<EventData>? EventSubscribed;
     public event Action<EventData>? EventUnsubscribed;
@@ -20,7 +20,7 @@ public partial class ChzzkSession : IAsyncDisposable
     public event Action<DonationMessage>? DonationReceived;
     public event Action<SubscriptionMessage>? SubscriptionReceived;
 
-    public ChzzkSession(Uri uri)
+    internal ChzzkSession(Uri uri)
     {
         socket = new SocketIO(uri,
         new SocketIOOptions
@@ -38,38 +38,35 @@ public partial class ChzzkSession : IAsyncDisposable
         socket.On("SUBSCRIPTION", OnSubscription);
     }
 
-    public async Task ConnectAsync()
+    static TaskCompletionSource<string> CreateConnectSource()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public async Task ConnectAsync(CancellationToken ct = default)
     {
-        await socket.ConnectAsync();
-        SessionKey = await connectTcs.Task;
+        var pending = connectTcs = CreateConnectSource();
+
+        await socket.ConnectAsync(ct);
+
+        using var registration = ct.Register(() => pending.TrySetCanceled(ct));
+
+        SessionKey = await pending.Task;
     }
 
-    public async Task DisconnectAsync()
+    public Task DisconnectAsync(CancellationToken ct = default) => socket.DisconnectAsync(ct);
+
+    public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUserApi userApi, EventType eventType, CancellationToken ct = default)
     {
-        await socket.DisconnectAsync();
+        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
+
+        return userApi.PostUserAsync(uri, null, ct);
     }
 
-    public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUserApi api, EventType eventType)
+    public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUserApi userApi, EventType eventType, CancellationToken ct = default)
     {
-        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{ToPathSegment(eventType)}", "sessionKey", SessionKey);
+        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
 
-        return api.PostUserAsync(uri, null);
+        return userApi.PostUserAsync(uri, null, ct);
     }
-
-    public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUserApi api, EventType eventType)
-    {
-        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{ToPathSegment(eventType)}", "sessionKey", SessionKey);
-
-        return api.PostUserAsync(uri, null);
-    }
-
-    private static string ToPathSegment(EventType eventType) => eventType switch
-    {
-        EventType.Chat => "chat",
-        EventType.Donation => "donation",
-        EventType.Subscription => "subscription",
-        _ => throw new ArgumentOutOfRangeException(nameof(eventType), eventType, null)
-    };
 
     Task OnSystem(IEventContext response)
     {
@@ -82,8 +79,8 @@ public partial class ChzzkSession : IAsyncDisposable
         switch (message.Type)
         {
             case "connected":
-                var key = message.Data.GetProperty("sessionKey").GetString();
-                connectTcs.TrySetResult(key!);
+                var key = message.Data.GetProperty("sessionKey").GetString()!;
+                connectTcs.TrySetResult(key);
                 break;
             case "subscribed":
                 var subscribed = message.Data.Deserialize<EventData>();
@@ -129,7 +126,7 @@ public partial class ChzzkSession : IAsyncDisposable
             return Task.CompletedTask;
 
         var message = JsonSerializer.Deserialize<SubscriptionMessage>(payload);
-        if (message is not null) 
+        if (message is not null)
             SubscriptionReceived?.Invoke(message);
         return Task.CompletedTask;
     }
@@ -138,6 +135,7 @@ public partial class ChzzkSession : IAsyncDisposable
     {
         if (socket.Connected)
             await socket.DisconnectAsync();
+
         socket.Dispose();
     }
 }

@@ -38,7 +38,7 @@ internal static class Program
         httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
 
         clientApi = new ChzzkClientApi(
-            httpClientFactory.CreateClient(nameof(ChzzkClientApi)),
+            httpClientFactory,
             config.ClientId,
             config.ClientSecret);
 

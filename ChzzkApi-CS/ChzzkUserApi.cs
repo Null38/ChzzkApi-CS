@@ -12,6 +12,9 @@ public class ChzzkUserApi
     public string AccessToken { get; private set; }
     public string RefreshToken { get; private set; }
 
+    readonly Lock refreshGate = new();
+    Task<ChzzkResponse<TokenContent>>? refreshTask;
+
     public ChzzkUserApi(ChzzkClientApi clientApi, string accessToken, string refreshToken)
     {
         ClientApi = clientApi;
@@ -40,17 +43,31 @@ public class ChzzkUserApi
 
     #region Authorization
 
-    public async Task<ChzzkResponse<TokenContent>> RefreshAccessTokenAsync(CancellationToken ct = default)
+    public Task<ChzzkResponse<TokenContent>> RefreshAccessTokenAsync(CancellationToken ct = default)
     {
-        var response = await ClientApi.RefreshAccessTokenAsync(RefreshToken, ct);
+        lock (refreshGate)
+            return refreshTask ??= RefreshCoreAsync(ct);
+    }
 
-        if (response.Code == ChzzkStatusCode.Success)
+    private async Task<ChzzkResponse<TokenContent>> RefreshCoreAsync(CancellationToken ct)
+    {
+        try
         {
-            AccessToken = response.Content!.AccessToken;
-            RefreshToken = response.Content.RefreshToken;
-        }
+            var response = await ClientApi.RefreshAccessTokenAsync(RefreshToken, ct);
 
-        return response;
+            if (response.Code == ChzzkStatusCode.Success)
+            {
+                AccessToken = response.Content!.AccessToken;
+                RefreshToken = response.Content.RefreshToken;
+            }
+
+            return response;
+        }
+        finally
+        {
+            lock (refreshGate)
+                refreshTask = null;
+        }
     }
 
     public Task<ChzzkResponse> RevokeAccessTokenAsync(CancellationToken ct = default)
