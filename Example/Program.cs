@@ -61,8 +61,8 @@ internal static class Program
         var subscribeRes = await CallWithAuthAsync(() => session.SubscribeEventAsync(userApi, EventType.Chat));
         Console.WriteLine($"Subscribe: {subscribeRes.Code} {subscribeRes.Message}");
 
-        session.Errors.ErrorOccurred += error
-            => Console.WriteLine($"[{error.Source}] {error.Exception.GetType().Name}: {error.Exception.Message}");
+        session.Exceptions.SetExceptionOccurred(error
+            => Console.WriteLine($"[{error.Source}] {error.Exception.GetType().Name}: {error.Exception.Message}"));
 
         // Handlers run on the receive thread, so the echo is offloaded rather than awaited here.
         // An async lambda would compile as async void and lose the send failure.

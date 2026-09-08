@@ -7,42 +7,22 @@ namespace ChzzkApi_CS.Session;
 
 public class ChzzkSession : IAsyncDisposable
 {
-    // Also bounds the wait for the connected frame, which the transport timeout does not cover.
     static readonly TimeSpan ConnectionTimeout = TimeSpan.FromSeconds(3);
 
     readonly SocketIO socket;
     readonly TaskCompletionSource<string> connectTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    int connectStarted;
+    bool isConnectStarted = false;
 
     public string SessionKey { get; private set; } = string.Empty;
 
-    /// <summary>
-    /// Failures raised inside socket receive callbacks, which have no caller to throw to.
-    /// Subscribe to <see cref="SessionErrorBuffer.ErrorOccurred"/> or drain it to observe them.
-    /// </summary>
-    public SessionErrorBuffer Errors { get; } = new();
+    public ExceptionBuffer Exceptions { get; } = new();
 
-    /// <remarks>
-    /// Subscribers run synchronously on the socket receive thread, so a slow one delays every
-    /// later message. Offload heavy or asynchronous work yourself and handle its failures there;
-    /// an async lambda bound to this event compiles as async void and its failures are lost.
-    /// </remarks>
     public event Action<EventData>? EventSubscribed;
-
-    /// <inheritdoc cref="EventSubscribed"/>
     public event Action<EventData>? EventUnsubscribed;
-
-    /// <inheritdoc cref="EventSubscribed"/>
     public event Action<EventData>? EventRevoked;
-
-    /// <inheritdoc cref="EventSubscribed"/>
     public event Action<ChatMessage>? ChatReceived;
-
-    /// <inheritdoc cref="EventSubscribed"/>
     public event Action<DonationMessage>? DonationReceived;
-
-    /// <inheritdoc cref="EventSubscribed"/>
     public event Action<SubscriptionMessage>? SubscriptionReceived;
 
     internal ChzzkSession(Uri uri)
@@ -66,25 +46,30 @@ public class ChzzkSession : IAsyncDisposable
         socket.On("SUBSCRIPTION", response => Dispatch("SUBSCRIPTION", response, SubscriptionReceived));
     }
 
-    /// <summary>
-    /// Connects and waits for the server to issue a session key.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">The session was already connected. A session URI is single-use.</exception>
-    /// <exception cref="TimeoutException">The transport connected but no session key arrived.</exception>
     public async Task ConnectAsync(CancellationToken ct = default)
     {
-        if (Interlocked.Exchange(ref connectStarted, 1) == 1)
+        if (Interlocked.Exchange(ref isConnectStarted, true) == true)
             throw new InvalidOperationException("This session was already connected. Create a new session to connect again.");
 
         await socket.ConnectAsync(ct);
 
-        SessionKey = await connectTcs.Task.WaitAsync(ConnectionTimeout, ct);
+        try
+        {
+            SessionKey = await connectTcs.Task.WaitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            await DisposeAsync();
+        }
     }
 
     public Task DisconnectAsync(CancellationToken ct = default) => socket.DisconnectAsync(ct);
 
     public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUserApi userApi, EventType eventType, CancellationToken ct = default)
     {
+        if (!socket.Connected)
+            throw new InvalidOperationException("The session isn't connected.");
+
         string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
 
         return userApi.PostUserAsync(uri, null, ct);
@@ -92,46 +77,55 @@ public class ChzzkSession : IAsyncDisposable
 
     public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUserApi userApi, EventType eventType, CancellationToken ct = default)
     {
+        if (!socket.Connected)
+            throw new InvalidOperationException("The session isn't connected.");
+
         string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
 
         return userApi.PostUserAsync(uri, null, ct);
     }
 
     void OnDisconnected(object? sender, string reason)
-        => FailConnectOrReport(new IOException($"Session disconnected: {reason}"));
+        => connectTcs.TrySetException(new IOException($"Session disconnected before a session key was issued: {reason}"));
 
     void OnError(object? sender, string message)
-        => FailConnectOrReport(new IOException($"Socket error: {message}"));
+    {
+        IOException exception = new($"SocketIO error: {message}");
+
+        if (!connectTcs.TrySetException(exception))
+            Report("socketIO", exception);
+    }
 
     Task OnSystem(IEventContext response)
     {
-        try
+        if (Parse<SystemMessage>(response, "SYSTEM") is not SystemMessage message)
         {
-            if (response.GetValue<JsonElement>(0).GetString() is not string payload)
-                return Task.CompletedTask;
-
-            if (JsonSerializer.Deserialize<SystemMessage>(payload) is not SystemMessage message)
-                return Task.CompletedTask;
-
-            switch (message.Type)
-            {
-                case "connected":
-                    CompleteConnect(message.Data);
-                    break;
-                case "subscribed":
-                    Raise("SYSTEM", EventSubscribed, message.Data.Deserialize<EventData>());
-                    break;
-                case "unsubscribed":
-                    Raise("SYSTEM", EventUnsubscribed, message.Data.Deserialize<EventData>());
-                    break;
-                case "revoked":
-                    Raise("SYSTEM", EventRevoked, message.Data.Deserialize<EventData>());
-                    break;
-            }
+            return Task.CompletedTask;
         }
-        catch (Exception ex)
+
+        if (message.Type == "connected")
         {
-            FailConnectOrReport(ex, "SYSTEM");
+            CompleteConnect(message.Data);
+            return Task.CompletedTask;
+
+        }
+
+        if (Parse<EventData>(message.Data, "SYSTEM") is not EventData eventData)
+        {
+            return Task.CompletedTask;
+        }
+
+        switch (message.Type)
+        {
+            case "subscribed":
+                Raise("[SYSTEM] subscribed", EventSubscribed, eventData);
+                break;
+            case "unsubscribed":
+                Raise("[SYSTEM] unsubscribed", EventUnsubscribed, eventData);
+                break;
+            case "revoked":
+                Raise("[SYSTEM] revoked", EventRevoked, eventData);
+                break;
         }
 
         return Task.CompletedTask;
@@ -144,28 +138,44 @@ public class ChzzkSession : IAsyncDisposable
         else
             connectTcs.TrySetException(new JsonException("The connected frame carried no sessionKey."));
     }
-
-    Task Dispatch<T>(string source, IEventContext response, Action<T>? handler) where T : class
+    T? Parse<T>(IEventContext response, string source)
     {
         try
         {
-            if (response.GetValue<JsonElement>(0).GetString() is not string payload)
-                return Task.CompletedTask;
-
-            Raise(source, handler, JsonSerializer.Deserialize<T>(payload));
+            return JsonSerializer.Deserialize<T>(response.GetValue<JsonElement>(0).GetString()!);
         }
         catch (Exception ex)
         {
             Report(source, ex);
+            return default;
         }
+    }
+    T? Parse<T>(JsonElement element, string source)
+    {
+        try
+        {
+            return element.Deserialize<T>();
+        }
+        catch (Exception ex)
+        {
+            Report(source, ex);
+            return default;
+        }
+    }
+
+    Task Dispatch<T>(string source, IEventContext response, Action<T>? handler)
+    {
+        if (Parse<T>(response, source) is not T payload)
+        {
+            return Task.CompletedTask;
+        }
+
+        Raise(source, handler, payload);
 
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Invokes each subscriber in isolation so that one throwing does not skip the rest.
-    /// </summary>
-    void Raise<T>(string source, Action<T>? handler, T? message) where T : class
+    void Raise<T>(string source, Action<T>? handler, T? message)
     {
         if (handler is null || message is null)
             return;
@@ -183,18 +193,8 @@ public class ChzzkSession : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Hands the failure to whoever is waiting on <see cref="ConnectAsync"/>, or buffers it once
-    /// the connect has settled and no caller is left to throw to.
-    /// </summary>
-    void FailConnectOrReport(Exception exception, string source = "SOCKET")
-    {
-        if (!connectTcs.TrySetException(exception))
-            Report(source, exception);
-    }
-
     void Report(string source, Exception exception)
-        => Errors.Add(new SessionError(DateTimeOffset.UtcNow, source, exception));
+        => Exceptions.Add(new ExceptionInfo(DateTimeOffset.UtcNow, source, exception));
 
     public async ValueTask DisposeAsync()
     {
@@ -203,7 +203,7 @@ public class ChzzkSession : IAsyncDisposable
 
         if (socket.Connected)
             await socket.DisconnectAsync();
-
+        
         socket.Dispose();
     }
 }

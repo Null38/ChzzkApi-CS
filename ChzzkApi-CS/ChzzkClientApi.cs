@@ -39,7 +39,7 @@ public class ChzzkClientApi
         string body = await response.Content.ReadAsStringAsync(ct);
 
         return JsonSerializer.Deserialize<T>(body)
-            ?? throw new InvalidOperationException("Chzzk API response deserialized to null.");
+            ?? throw new JsonException("Chzzk API response deserialized to null.");
     }
 
     private Task<T> SendClientCoreAsync<T>(HttpRequestMessage request, CancellationToken ct = default)
