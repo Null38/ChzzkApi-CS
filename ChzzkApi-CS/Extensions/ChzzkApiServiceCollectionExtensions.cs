@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 
-namespace ChzzkApi_CS.Extensions;
+namespace ChzzkApi.Extensions;
 
 public static class ChzzkApiServiceCollectionExtensions
 {

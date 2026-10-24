@@ -1,8 +1,21 @@
 using System.Collections;
 
-namespace ChzzkApi_CS.Session;
+namespace ChzzkApi.Session;
 
-public readonly record struct ExceptionInfo(DateTimeOffset TimeUtc, string Source, Exception Exception);
+public readonly record struct ExceptionInfo
+{
+    public const string HandlingContextDataKey = "ChzzkSession.HandlingContext";
+
+    public readonly DateTimeOffset TimeUtc;
+    public readonly Exception Exception;
+
+    public ExceptionInfo(DateTimeOffset timeUtc, string source, Exception exception)
+    {
+        TimeUtc = timeUtc;
+        Exception = exception;
+        exception.Data[HandlingContextDataKey] = source;
+    }
+};
 
 public sealed class ExceptionBuffer : IEnumerable<ExceptionInfo>
 {

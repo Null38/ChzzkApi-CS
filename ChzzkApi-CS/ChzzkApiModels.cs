@@ -1,6 +1,6 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace ChzzkApi_CS;
+namespace ChzzkApi;
 public record ChzzkResponse(
     [property: JsonPropertyName("code")] int Code,
     [property: JsonPropertyName("message")] string? Message);

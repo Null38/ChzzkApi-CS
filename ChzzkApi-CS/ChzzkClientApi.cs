@@ -1,13 +1,12 @@
-﻿using ChzzkApi_CS.Session;
+﻿using ChzzkApi.Session;
 using Microsoft.AspNetCore.WebUtilities;
 using System.Collections.Specialized;
 using System.Net;
-using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
 
-namespace ChzzkApi_CS;
+namespace ChzzkApi;
 
 public class ChzzkClientApi
 {

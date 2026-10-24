@@ -3,7 +3,7 @@ using SocketIOClient;
 using System.Text.Json;
 using System.Web;
 
-namespace ChzzkApi_CS.Session;
+namespace ChzzkApi.Session;
 
 public class ChzzkSession : IAsyncDisposable
 {
@@ -194,7 +194,9 @@ public class ChzzkSession : IAsyncDisposable
     }
 
     void Report(string source, Exception exception)
-        => Exceptions.Add(new ExceptionInfo(DateTimeOffset.UtcNow, source, exception));
+    {
+        Exceptions.Add(new ExceptionInfo(DateTimeOffset.UtcNow, source, exception));
+    }
 
     public async ValueTask DisposeAsync()
     {

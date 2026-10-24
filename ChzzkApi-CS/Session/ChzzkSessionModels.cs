@@ -1,7 +1,7 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ChzzkApi_CS.Session;
+namespace ChzzkApi.Session;
 
 public record SessionListData(
     [property: JsonPropertyName("data")] List<SessionInfo> Data);

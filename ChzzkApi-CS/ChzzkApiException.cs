@@ -1,4 +1,4 @@
-﻿namespace ChzzkApi_CS;
+﻿namespace ChzzkApi;
 
 public static class ChzzkStatusCode//enum으로 바꿀지 고민 필요
 {

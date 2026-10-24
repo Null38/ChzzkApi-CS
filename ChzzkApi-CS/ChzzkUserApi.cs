@@ -1,9 +1,9 @@
-using ChzzkApi_CS.Session;
+using ChzzkApi.Session;
 using Microsoft.AspNetCore.WebUtilities;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 
-namespace ChzzkApi_CS;
+namespace ChzzkApi;
 
 public class ChzzkUserApi
 {

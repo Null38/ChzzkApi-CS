@@ -10,6 +10,7 @@
     <Authors>Null38</Authors>
     <Description>Chzzk Open API C# client library</Description>
     <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,6 +1,6 @@
-using ChzzkApi_CS;
-using ChzzkApi_CS.Session;
-using ChzzkApi_CS.Extensions;
+using ChzzkApi;
+using ChzzkApi.Session;
+using ChzzkApi.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -62,7 +62,7 @@ internal static class Program
         Console.WriteLine($"Subscribe: {subscribeRes.Code} {subscribeRes.Message}");
 
         session.Exceptions.SetExceptionOccurred(error
-            => Console.WriteLine($"[{error.Source}] {error.Exception.GetType().Name}: {error.Exception.Message}"));
+            => Console.WriteLine($"[{error.Exception.Data[ExceptionInfo.HandlingContextDataKey]}] {error.Exception.GetType().Name}: {error.Exception.Message}"));
 
         // Handlers run on the receive thread, so the echo is offloaded rather than awaited here.
         // An async lambda would compile as async void and lose the send failure.
