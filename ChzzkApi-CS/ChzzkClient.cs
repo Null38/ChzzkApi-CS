@@ -1,4 +1,6 @@
-﻿using ChzzkApi.Session;
+﻿global using Query = System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string?>>;
+
+using ChzzkApi.Session;
 using Microsoft.AspNetCore.WebUtilities;
 using System.Collections.Specialized;
 using System.Net;
@@ -17,13 +19,16 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     public string ClientId { get; } = clientId;
     private readonly string clientSecret = clientSecret;
 
-    internal async Task<T> SendCoreAsync<T>(HttpMethod method, string pathAndQuery, HttpContent? content,
+    internal async Task<T> SendCoreAsync<T>(HttpMethod method, string path, Query? query, object? body,
         Action<HttpRequestHeaders>? setHeaders, CancellationToken ct = default)
         where T : ChzzkResponse
     {
         var client = ClientFactory.CreateClient(nameof(ChzzkApi));
 
-        using var request = new HttpRequestMessage(method, $"{Path}{pathAndQuery}") { Content = content };
+        using var request = new HttpRequestMessage(method, $"{Path}{(query is null ? path : QueryHelpers.AddQueryString(path, query))}")
+        {
+            Content = body is null ? null : JsonContent.Create(body)
+        };
         setHeaders?.Invoke(request.Headers);
 
         HttpResponseMessage response;
@@ -33,47 +38,39 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
         }
         catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
         {
-            throw new TimeoutException(ex.Message, ex); ;
+            throw new TimeoutException(ex.Message, ex);
         }
 
-        string body = await response.Content.ReadAsStringAsync(ct);
+        string raw = await response.Content.ReadAsStringAsync(ct);
         response.Dispose();
 
         T? envelope;
         try
         {
-            envelope = ChzzkResponse.Parse<T>(body);
+            envelope = ChzzkResponse.Parse<T>(raw);
         }
         catch (JsonException ex)
         {
-            throw new ChzzkResponseException(response.StatusCode, body, ex);
+            throw new ChzzkResponseException(response.StatusCode, raw, ex);
         }
 
         if (envelope is null || envelope.Code == default)
-            throw new ChzzkResponseException(response.StatusCode, body);
+            throw new ChzzkResponseException(response.StatusCode, raw);
 
         return envelope;
     }
 
-    private Task<T> SendClientCoreAsync<T>(HttpMethod method, string uri, HttpContent? content, CancellationToken ct = default)
-        where T : ChzzkResponse
-        => SendCoreAsync<T>(method, uri, content, headers =>
-        {
-            headers.Add("Client-Id", ClientId);
-            headers.Add("Client-Secret", clientSecret);
-        }, ct);
+    public Task<ChzzkResponse<T>> SendClientAsync<T>(HttpMethod method, string path, Query? query = null, object? body = null, CancellationToken ct = default)
+        => SendCoreAsync<ChzzkResponse<T>>(method, path, query, body, SetClientHeaders, ct);
 
-    public Task<ChzzkResponse<T>> GetClientAsync<T>(string uri, CancellationToken ct = default)
-        => SendClientCoreAsync<ChzzkResponse<T>>(HttpMethod.Get, uri, null, ct);
+    public Task<ChzzkResponse> SendClientAsync(HttpMethod method, string path, Query? query = null, object? body = null, CancellationToken ct = default)
+        => SendCoreAsync<ChzzkResponse>(method, path, query, body, SetClientHeaders, ct);
 
-    public Task<ChzzkResponse> GetClientAsync(string uri, CancellationToken ct = default)
-        => SendClientCoreAsync<ChzzkResponse>(HttpMethod.Get, uri, null, ct);
-
-    public Task<ChzzkResponse<T>> PostClientAsync<T>(string uri, HttpContent? content, CancellationToken ct = default)
-        => SendClientCoreAsync<ChzzkResponse<T>>(HttpMethod.Post, uri, content, ct);
-
-    public Task<ChzzkResponse> PostClientAsync(string uri, HttpContent? content, CancellationToken ct = default)
-        => SendClientCoreAsync<ChzzkResponse>(HttpMethod.Post, uri, content, ct);
+    private void SetClientHeaders(HttpRequestHeaders headers)
+    {
+        headers.Add("Client-Id", ClientId);
+        headers.Add("Client-Secret", clientSecret);
+    }
 
     #region Authorization
 
@@ -144,7 +141,7 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
 
     private Task<T> PostAuthAsync<T>(string uri, object requestBody, CancellationToken ct)
         where T : ChzzkResponse
-        => SendCoreAsync<T>(HttpMethod.Post, uri, JsonContent.Create(requestBody), null, ct);
+        => SendCoreAsync<T>(HttpMethod.Post, uri, null, requestBody, null, ct);
 
     public async Task<ChzzkUser> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
     {
@@ -162,7 +159,11 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
         if (wrapper.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(wrapper);
 
-        return new(this, wrapper.Content!.AccessToken, wrapper.Content.RefreshToken);
+        return new(this, new ChzzkUser.ChzzkToken
+        {
+            AccessToken = wrapper.Content!.AccessToken,
+            RefreshToken = wrapper.Content.RefreshToken
+        });
     }
 
     public Task<ChzzkResponse<TokenContent>> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)
@@ -195,20 +196,11 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     #region Session
 
     public async Task<ChzzkResponse<SessionListData>> GetSessionListAsync(int size = 20, string page = "0", CancellationToken ct = default)
-    {
-        var uri = QueryHelpers.AddQueryString("/open/v1/sessions/client",
-            new Dictionary<string, string?>
-            {
-                ["size"] = size.ToString(),
-                ["page"] = page
-            });
-
-        return await GetClientAsync<SessionListData>(uri, ct);
-    }
+        => await SendClientAsync<SessionListData>(HttpMethod.Get, "/open/v1/sessions/client", [new("size", size.ToString()), new("page", page)], ct: ct);
 
     public async Task<ChzzkSession> CreateSessionAsync(CancellationToken ct = default)
     {
-        var response = await GetClientAsync<SessionCreateContent>("/open/v1/sessions/auth/client", ct);
+        var response = await SendClientAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth/client", ct: ct);
 
         if (response.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(response);

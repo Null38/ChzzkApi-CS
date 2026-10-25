@@ -1,37 +1,34 @@
 using ChzzkApi.Session;
-using Microsoft.AspNetCore.WebUtilities;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
+using static ChzzkApi.ChzzkUser;
 
 namespace ChzzkApi;
 
-public class ChzzkUser(ChzzkClient clientApi, string accessToken, string refreshToken)
+public class ChzzkUser(ChzzkClient clientApi, ChzzkToken token)
 {
+    public record ChzzkToken
+    {
+        public required string AccessToken { get; init; }
+        public required string RefreshToken { get; init; }
+    }
+
     private ChzzkClient ClientApi { get; init; } = clientApi;
 
-    public string AccessToken { get; private set; } = accessToken;
-    public string RefreshToken { get; private set; } = refreshToken;
+    public ChzzkToken Token { get; private set; } = token;
 
     readonly Lock refreshGate = new();
     Task<ChzzkResponse<TokenContent>>? refreshTask;
 
-    private Task<T> SendUserCoreAsync<T>(HttpMethod method, string uri, HttpContent? content, CancellationToken ct = default)
-        where T : ChzzkResponse
-        => ClientApi.SendCoreAsync<T>(method, uri, content,
-            headers => headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken), ct);
+    public Task<ChzzkResponse<T>> SendUserAsync<T>(HttpMethod method, string path, Query? query = null, object? body = null, CancellationToken ct = default)
+        => ClientApi.SendCoreAsync<ChzzkResponse<T>>(method, path, query, body, SetUserHeaders, ct);
 
-    public Task<ChzzkResponse<T>> GetUserAsync<T>(string uri, CancellationToken ct = default)
-        => SendUserCoreAsync<ChzzkResponse<T>>(HttpMethod.Get, uri, null, ct);
+    public Task<ChzzkResponse> SendUserAsync(HttpMethod method, string path, Query? query = null, object? body = null, CancellationToken ct = default)
+        => ClientApi.SendCoreAsync<ChzzkResponse>(method, path, query, body, SetUserHeaders, ct);
 
-    public Task<ChzzkResponse> GetUserAsync(string uri, CancellationToken ct = default)
-        => SendUserCoreAsync<ChzzkResponse>(HttpMethod.Get, uri, null, ct);
+    private void SetUserHeaders(HttpRequestHeaders headers)
+        => headers.Authorization = new AuthenticationHeaderValue("Bearer", Token.AccessToken);
 
-    public Task<ChzzkResponse<T>> PostUserAsync<T>(string uri, HttpContent? content, CancellationToken ct = default)
-        => SendUserCoreAsync<ChzzkResponse<T>>(HttpMethod.Post, uri, content, ct);
-
-    public Task<ChzzkResponse> PostUserAsync(string uri, HttpContent? content, CancellationToken ct = default)
-        => SendUserCoreAsync<ChzzkResponse>(HttpMethod.Post, uri, content, ct);
 
     #region Authorization
 
@@ -45,12 +42,15 @@ public class ChzzkUser(ChzzkClient clientApi, string accessToken, string refresh
     {
         try
         {
-            var response = await ClientApi.RefreshAccessTokenAsync(RefreshToken, ct);
+            var response = await ClientApi.RefreshAccessTokenAsync(Token.RefreshToken, ct);
 
             if (response.Code == HttpStatusCode.OK)
             {
-                AccessToken = response.Content!.AccessToken;
-                RefreshToken = response.Content.RefreshToken;
+                Token = new ChzzkToken
+                {
+                    AccessToken = response.Content!.AccessToken,
+                    RefreshToken = response.Content.RefreshToken
+                };
             }
 
             return response;
@@ -63,26 +63,17 @@ public class ChzzkUser(ChzzkClient clientApi, string accessToken, string refresh
     }
 
     public Task<ChzzkResponse> RevokeAccessTokenAsync(CancellationToken ct = default)
-        => ClientApi.RevokeAccessTokenAsync(AccessToken, ct: ct);
+        => ClientApi.RevokeAccessTokenAsync(Token.AccessToken, ct: ct);
 
     #endregion Authorization
     #region Session
 
     public Task<ChzzkResponse<SessionListData>> GetSessionListAsync(int size = 20, string page = "0", CancellationToken ct = default)
-    {
-        var uri = QueryHelpers.AddQueryString("/open/v1/sessions",
-            new Dictionary<string, string?>
-            {
-                ["size"] = size.ToString(),
-                ["page"] = page
-            });
-
-        return GetUserAsync<SessionListData>(uri, ct);
-    }
+        => SendUserAsync<SessionListData>(HttpMethod.Get, "/open/v1/sessions", [new("size", size.ToString()), new("page", page)], ct: ct);
 
     public async Task<ChzzkSession> CreateSessionAsync(CancellationToken ct = default)
     {
-        var response = await GetUserAsync<SessionCreateContent>("/open/v1/sessions/auth", ct);
+        var response = await SendUserAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth", ct: ct);
 
         if (response.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(response);
@@ -94,7 +85,7 @@ public class ChzzkUser(ChzzkClient clientApi, string accessToken, string refresh
     #region User
 
     public Task<ChzzkResponse<UserInfo>> GetUserInfoAsync(CancellationToken ct = default)
-        => GetUserAsync<UserInfo>("/open/v1/users/me", ct);
+        => SendUserAsync<UserInfo>(HttpMethod.Get, "/open/v1/users/me", ct: ct);
 
     #endregion User
     #region Channel
@@ -111,7 +102,7 @@ public class ChzzkUser(ChzzkClient clientApi, string accessToken, string refresh
 
 
     public Task<ChzzkResponse<ChatMessageContent>> PostChatMessageAsync(string message, CancellationToken ct = default)
-        => PostUserAsync<ChatMessageContent>("/open/v1/chats/send", JsonContent.Create(new { message }), ct);
+        => SendUserAsync<ChatMessageContent>(HttpMethod.Post, "/open/v1/chats/send", body: new { message }, ct: ct);
 
     #endregion Chat
     #region Restriction
