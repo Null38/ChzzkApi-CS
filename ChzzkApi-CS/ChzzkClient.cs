@@ -8,43 +8,52 @@ using System.Text.Json;
 
 namespace ChzzkApi;
 
-public class ChzzkClientApi
+public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, string clientSecret)
 {
-    private IHttpClientFactory ClientFactory { get; init; }
 
-    public string ClientId { get; private set; }
-    public string ClientSecret { get; private set; }
+    private IHttpClientFactory ClientFactory { get; init; } = clientFactory;
+    public string ClientId { get; } = clientId;
+    private readonly string clientSecret = clientSecret;
 
-    public ChzzkClientApi(IHttpClientFactory clientFactory, string clientId, string clientSecret)
+    internal async Task<T> SendCoreAsync<T>(HttpRequestMessage request, CancellationToken ct = default)
+        where T : ChzzkResponse
     {
-        ClientFactory = clientFactory;
-        ClientId = clientId;
-        ClientSecret = clientSecret;
-    }
+        var client = ClientFactory.CreateClient(nameof(ChzzkApi));
 
-    public void SetCredentials(string clientId, string clientSecret)
-    {
-
-        ClientId = clientId;
-        ClientSecret = clientSecret;
-    }
-    
-    public async Task<T> SendCoreAsync<T>(HttpRequestMessage request, CancellationToken ct)
-    {
-        var client = ClientFactory.CreateClient(nameof(ChzzkClientApi));
-
-        using var response = await client.SendAsync(request, ct);
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.SendAsync(request, ct);
+        }
+        catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
+        {
+            throw new TimeoutException(ex.Message, ex); ;
+        }
 
         string body = await response.Content.ReadAsStringAsync(ct);
+        response.Dispose();
 
-        return JsonSerializer.Deserialize<T>(body)
-            ?? throw new JsonException("Chzzk API response deserialized to null.");
+        T? envelope;
+        try
+        {
+            envelope = ChzzkResponse.Parse<T>(body);
+        }
+        catch (JsonException ex)
+        {
+            throw new ChzzkResponseException(response.StatusCode, body, ex);
+        }
+
+        if (envelope is null || envelope.Code == default)
+            throw new ChzzkResponseException(response.StatusCode, body);
+
+        return envelope;
     }
 
     private Task<T> SendClientCoreAsync<T>(HttpRequestMessage request, CancellationToken ct = default)
+        where T : ChzzkResponse
     {
         request.Headers.Add("Client-Id", ClientId);
-        request.Headers.Add("Client-Secret", ClientSecret);
+        request.Headers.Add("Client-Secret", clientSecret);
 
         return SendCoreAsync<T>(request, ct);
     }
@@ -129,22 +138,23 @@ public class ChzzkClientApi
     }
 
     private Task<T> PostAuthAsync<T>(string uri, object requestBody, CancellationToken ct)
+        where T : ChzzkResponse
         => SendCoreAsync<T>(new HttpRequestMessage(HttpMethod.Post, uri) { Content = JsonContent.Create(requestBody) }, ct);
 
-    public async Task<ChzzkUserApi> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
+    public async Task<ChzzkUser> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
     {
         var requestBody = new
         {
             grantType = "authorization_code",
             clientId = ClientId,
-            clientSecret = ClientSecret,
-            code = code,
-            state = state
+            clientSecret,
+            code,
+            state
         };
 
         var wrapper = await PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct);
 
-        if (wrapper.Code != ChzzkStatusCode.Success)
+        if (wrapper.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(wrapper);
 
         return new(this, wrapper.Content!.AccessToken, wrapper.Content.RefreshToken);
@@ -155,9 +165,9 @@ public class ChzzkClientApi
         var requestBody = new
         {
             grantType = "refresh_token",
-            refreshToken = refreshToken,
+            refreshToken,
             clientId = ClientId,
-            clientSecret = ClientSecret
+            clientSecret
         };
 
         return PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct);
@@ -168,9 +178,9 @@ public class ChzzkClientApi
         var requestBody = new
         {
             clientId = ClientId,
-            clientSecret = ClientSecret,
-            token = token,
-            tokenTypeHint = tokenTypeHint
+            clientSecret,
+            token,
+            tokenTypeHint
         };
 
         return PostAuthAsync<ChzzkResponse>("/auth/v1/token/revoke", requestBody, ct);
@@ -195,7 +205,7 @@ public class ChzzkClientApi
     {
         var response = await GetClientAsync<SessionCreateContent>("/open/v1/sessions/auth/client", ct);
 
-        if (response.Code != ChzzkStatusCode.Success)
+        if (response.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(response);
 
         return new ChzzkSession(new Uri(response.Content!.Url));

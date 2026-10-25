@@ -21,8 +21,8 @@ internal static class Program
     const string RedirectUri = "http://localhost:8080/api/path/";
 
     static IHttpClientFactory httpClientFactory;
-    static ChzzkClientApi clientApi;
-    static ChzzkUserApi? userApi;
+    static ChzzkClient clientApi;
+    static ChzzkUser? userApi;
     static AppConfig config;
     static readonly HashSet<string> pendingEchoes = [];
 
@@ -37,13 +37,13 @@ internal static class Program
         var sp = services.BuildServiceProvider();
         httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
 
-        clientApi = new ChzzkClientApi(
+        clientApi = new ChzzkClient(
             httpClientFactory,
             config.ClientId,
             config.ClientSecret);
 
         if (config.AccessToken != null)
-            userApi = new ChzzkUserApi(clientApi, config.AccessToken, config.RefreshToken ?? string.Empty);
+            userApi = new ChzzkUser(clientApi, config.AccessToken, config.RefreshToken ?? string.Empty);
     }
 
     static async Task Main(string[] args)
@@ -126,7 +126,7 @@ internal static class Program
     {
         var authUri = clientApi.GetAuthorizationUri(RedirectUri, out string state);
         OpenUrl(authUri);
-        var code = await ChzzkClientApi.WaitForAuthorizationCodeAsync(RedirectUri, state);
+        var code = await ChzzkClient.WaitForAuthorizationCodeAsync(RedirectUri, state);
 
         userApi = await clientApi.IssueAccessTokenAsync(code, state);
         UpdateTokens();

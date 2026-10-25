@@ -65,7 +65,7 @@ public class ChzzkSession : IAsyncDisposable
 
     public Task DisconnectAsync(CancellationToken ct = default) => socket.DisconnectAsync(ct);
 
-    public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUserApi userApi, EventType eventType, CancellationToken ct = default)
+    public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUser userApi, EventType eventType, CancellationToken ct = default)
     {
         if (!socket.Connected)
             throw new InvalidOperationException("The session isn't connected.");
@@ -75,7 +75,7 @@ public class ChzzkSession : IAsyncDisposable
         return userApi.PostUserAsync(uri, null, ct);
     }
 
-    public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUserApi userApi, EventType eventType, CancellationToken ct = default)
+    public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUser userApi, EventType eventType, CancellationToken ct = default)
     {
         if (!socket.Connected)
             throw new InvalidOperationException("The session isn't connected.");

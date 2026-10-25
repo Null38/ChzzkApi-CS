@@ -1,13 +1,14 @@
 using ChzzkApi.Session;
 using Microsoft.AspNetCore.WebUtilities;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 
 namespace ChzzkApi;
 
-public class ChzzkUserApi
+public class ChzzkUser
 {
-    private ChzzkClientApi ClientApi { get; init; }
+    private ChzzkClient ClientApi { get; init; }
 
     public string AccessToken { get; private set; }
     public string RefreshToken { get; private set; }
@@ -15,7 +16,7 @@ public class ChzzkUserApi
     readonly Lock refreshGate = new();
     Task<ChzzkResponse<TokenContent>>? refreshTask;
 
-    public ChzzkUserApi(ChzzkClientApi clientApi, string accessToken, string refreshToken)
+    public ChzzkUser(ChzzkClient clientApi, string accessToken, string refreshToken)
     {
         ClientApi = clientApi;
         AccessToken = accessToken;
@@ -23,6 +24,7 @@ public class ChzzkUserApi
     }
 
     private Task<T> SendUserCoreAsync<T>(HttpRequestMessage request, CancellationToken ct = default)
+        where T : ChzzkResponse
     {
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken);
 
@@ -55,7 +57,7 @@ public class ChzzkUserApi
         {
             var response = await ClientApi.RefreshAccessTokenAsync(RefreshToken, ct);
 
-            if (response.Code == ChzzkStatusCode.Success)
+            if (response.Code == HttpStatusCode.OK)
             {
                 AccessToken = response.Content!.AccessToken;
                 RefreshToken = response.Content.RefreshToken;
@@ -92,7 +94,7 @@ public class ChzzkUserApi
     {
         var response = await GetUserAsync<SessionCreateContent>("/open/v1/sessions/auth", ct);
 
-        if (response.Code != ChzzkStatusCode.Success)
+        if (response.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(response);
 
         return new ChzzkSession(new Uri(response.Content!.Url));
