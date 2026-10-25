@@ -6,42 +6,32 @@ using System.Net.Http.Json;
 
 namespace ChzzkApi;
 
-public class ChzzkUser
+public class ChzzkUser(ChzzkClient clientApi, string accessToken, string refreshToken)
 {
-    private ChzzkClient ClientApi { get; init; }
+    private ChzzkClient ClientApi { get; init; } = clientApi;
 
-    public string AccessToken { get; private set; }
-    public string RefreshToken { get; private set; }
+    public string AccessToken { get; private set; } = accessToken;
+    public string RefreshToken { get; private set; } = refreshToken;
 
     readonly Lock refreshGate = new();
     Task<ChzzkResponse<TokenContent>>? refreshTask;
 
-    public ChzzkUser(ChzzkClient clientApi, string accessToken, string refreshToken)
-    {
-        ClientApi = clientApi;
-        AccessToken = accessToken;
-        RefreshToken = refreshToken;
-    }
-
-    private Task<T> SendUserCoreAsync<T>(HttpRequestMessage request, CancellationToken ct = default)
+    private Task<T> SendUserCoreAsync<T>(HttpMethod method, string uri, HttpContent? content, CancellationToken ct = default)
         where T : ChzzkResponse
-    {
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken);
-
-        return ClientApi.SendCoreAsync<T>(request, ct);
-    }
+        => ClientApi.SendCoreAsync<T>(method, uri, content,
+            headers => headers.Authorization = new AuthenticationHeaderValue("Bearer", AccessToken), ct);
 
     public Task<ChzzkResponse<T>> GetUserAsync<T>(string uri, CancellationToken ct = default)
-        => SendUserCoreAsync<ChzzkResponse<T>>(new HttpRequestMessage(HttpMethod.Get, uri), ct);
+        => SendUserCoreAsync<ChzzkResponse<T>>(HttpMethod.Get, uri, null, ct);
 
     public Task<ChzzkResponse> GetUserAsync(string uri, CancellationToken ct = default)
-        => SendUserCoreAsync<ChzzkResponse>(new HttpRequestMessage(HttpMethod.Get, uri), ct);
+        => SendUserCoreAsync<ChzzkResponse>(HttpMethod.Get, uri, null, ct);
 
     public Task<ChzzkResponse<T>> PostUserAsync<T>(string uri, HttpContent? content, CancellationToken ct = default)
-        => SendUserCoreAsync<ChzzkResponse<T>>(new HttpRequestMessage(HttpMethod.Post, uri) { Content = content }, ct);
+        => SendUserCoreAsync<ChzzkResponse<T>>(HttpMethod.Post, uri, content, ct);
 
     public Task<ChzzkResponse> PostUserAsync(string uri, HttpContent? content, CancellationToken ct = default)
-        => SendUserCoreAsync<ChzzkResponse>(new HttpRequestMessage(HttpMethod.Post, uri) { Content = content }, ct);
+        => SendUserCoreAsync<ChzzkResponse>(HttpMethod.Post, uri, content, ct);
 
     #region Authorization
 

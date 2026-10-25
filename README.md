@@ -1,3 +1,3 @@
-# ChzzkApi-CS
+ï»¿# ChzzkApi-CS
 
-Chzzk api ºñ°ø½Ä C#·¡ÆÛÀÔ´Ï´Ù.
+Chzzk api ë¹„ê³µì‹ C#ëž˜í¼ìž…ë‹ˆë‹¤.

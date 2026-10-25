@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.WebUtilities;
 using System.Collections.Specialized;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -10,15 +11,20 @@ namespace ChzzkApi;
 
 public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, string clientSecret)
 {
+    private const string Path = "https://openapi.chzzk.naver.com";
 
     private IHttpClientFactory ClientFactory { get; init; } = clientFactory;
     public string ClientId { get; } = clientId;
     private readonly string clientSecret = clientSecret;
 
-    internal async Task<T> SendCoreAsync<T>(HttpRequestMessage request, CancellationToken ct = default)
+    internal async Task<T> SendCoreAsync<T>(HttpMethod method, string pathAndQuery, HttpContent? content,
+        Action<HttpRequestHeaders>? setHeaders, CancellationToken ct = default)
         where T : ChzzkResponse
     {
         var client = ClientFactory.CreateClient(nameof(ChzzkApi));
+
+        using var request = new HttpRequestMessage(method, $"{Path}{pathAndQuery}") { Content = content };
+        setHeaders?.Invoke(request.Headers);
 
         HttpResponseMessage response;
         try
@@ -49,26 +55,25 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
         return envelope;
     }
 
-    private Task<T> SendClientCoreAsync<T>(HttpRequestMessage request, CancellationToken ct = default)
+    private Task<T> SendClientCoreAsync<T>(HttpMethod method, string uri, HttpContent? content, CancellationToken ct = default)
         where T : ChzzkResponse
-    {
-        request.Headers.Add("Client-Id", ClientId);
-        request.Headers.Add("Client-Secret", clientSecret);
-
-        return SendCoreAsync<T>(request, ct);
-    }
+        => SendCoreAsync<T>(method, uri, content, headers =>
+        {
+            headers.Add("Client-Id", ClientId);
+            headers.Add("Client-Secret", clientSecret);
+        }, ct);
 
     public Task<ChzzkResponse<T>> GetClientAsync<T>(string uri, CancellationToken ct = default)
-        => SendClientCoreAsync<ChzzkResponse<T>>(new HttpRequestMessage(HttpMethod.Get, uri), ct);
+        => SendClientCoreAsync<ChzzkResponse<T>>(HttpMethod.Get, uri, null, ct);
 
     public Task<ChzzkResponse> GetClientAsync(string uri, CancellationToken ct = default)
-        => SendClientCoreAsync<ChzzkResponse>(new HttpRequestMessage(HttpMethod.Get, uri), ct);
+        => SendClientCoreAsync<ChzzkResponse>(HttpMethod.Get, uri, null, ct);
 
     public Task<ChzzkResponse<T>> PostClientAsync<T>(string uri, HttpContent? content, CancellationToken ct = default)
-        => SendClientCoreAsync<ChzzkResponse<T>>(new HttpRequestMessage(HttpMethod.Post, uri) { Content = content }, ct);
+        => SendClientCoreAsync<ChzzkResponse<T>>(HttpMethod.Post, uri, content, ct);
 
     public Task<ChzzkResponse> PostClientAsync(string uri, HttpContent? content, CancellationToken ct = default)
-        => SendClientCoreAsync<ChzzkResponse>(new HttpRequestMessage(HttpMethod.Post, uri) { Content = content }, ct);
+        => SendClientCoreAsync<ChzzkResponse>(HttpMethod.Post, uri, content, ct);
 
     #region Authorization
 
@@ -139,7 +144,7 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
 
     private Task<T> PostAuthAsync<T>(string uri, object requestBody, CancellationToken ct)
         where T : ChzzkResponse
-        => SendCoreAsync<T>(new HttpRequestMessage(HttpMethod.Post, uri) { Content = JsonContent.Create(requestBody) }, ct);
+        => SendCoreAsync<T>(HttpMethod.Post, uri, JsonContent.Create(requestBody), null, ct);
 
     public async Task<ChzzkUser> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
     {
