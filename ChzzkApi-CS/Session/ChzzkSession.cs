@@ -16,7 +16,7 @@ public class ChzzkSession : IAsyncDisposable
 
     public string SessionKey { get; private set; } = string.Empty;
 
-    public ExceptionBuffer Exceptions { get; } = new();
+    public ExceptionBuffer Exceptions { get; } = [];
 
     public event Action<EventData>? EventSubscribed;
     public event Action<EventData>? EventUnsubscribed;
@@ -72,7 +72,7 @@ public class ChzzkSession : IAsyncDisposable
 
         string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
 
-        return userApi.PostUserAsync(uri, null, ct);
+        return userApi.SendUserAsync(HttpMethod.Post, uri, null, ct: ct);
     }
 
     public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUser userApi, EventType eventType, CancellationToken ct = default)
@@ -82,7 +82,7 @@ public class ChzzkSession : IAsyncDisposable
 
         string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
 
-        return userApi.PostUserAsync(uri, null, ct);
+        return userApi.SendUserAsync(HttpMethod.Post, uri, null, ct: ct);
     }
 
     void OnDisconnected(object? sender, string reason)

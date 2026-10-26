@@ -19,6 +19,22 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     public string ClientId { get; } = clientId;
     private readonly string clientSecret = clientSecret;
 
+    private static readonly AsyncLocal<bool> inRule = new();
+
+    public RuleList Rules { get; } = new();
+
+    public static IDisposable SuppressRules()
+    {
+        var previous = inRule.Value;
+        inRule.Value = true;
+        return new RuleScope(previous);
+    }
+
+    private class RuleScope(bool previous) : IDisposable
+    {
+        public void Dispose() => inRule.Value = previous;
+    }
+
     internal async Task<T> SendCoreAsync<T>(HttpMethod method, string path, Query? query, object? body,
         Action<HttpRequestHeaders>? setHeaders, CancellationToken ct = default)
         where T : ChzzkResponse
@@ -60,11 +76,58 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
         return envelope;
     }
 
+    internal async Task<T> SendWithRulesAsync<T>(HttpMethod method, string path, Query? query, object? body,
+        Action<HttpRequestHeaders>? setHeaders, ChzzkUser? user = null, CancellationToken ct = default)
+        where T : ChzzkResponse
+    {
+        var token = user?.Token;
+        var response = await SendCoreAsync<T>(method, path, query, body, setHeaders, ct);
+        
+        if (inRule.Value)
+            return response;
+        inRule.Value = true;
+
+        var context = new ChzzkRuleContext(response, this, user, token, async resendCt =>
+        {
+            var resent = await SendCoreAsync<T>(method, path, query, body, setHeaders, resendCt);
+            return resent;
+        });
+
+        foreach (var rule in GetRules(user))
+            await rule(context, ct);
+
+        return (T)context.Response;
+    }
+
+    private List<ChzzkRule> GetRules(ChzzkUser? user)
+    {
+        List<ChzzkRule> result = [];
+
+        foreach (var entry in Rules.Entries)
+        {
+            if (entry.Key is not null && user is not null && user.Rules.TryGet(entry.Key, out var userEntry))
+                result.Add(userEntry.Rule);
+            else
+                result.Add(entry.Rule);
+        }
+
+        if (user is not null)
+        {
+            foreach (var entry in user.Rules.Entries)
+            {
+                if (entry.Key is null || !Rules.Contains(entry.Key))
+                    result.Add(entry.Rule);
+            }
+        }
+
+        return result;
+    }
+
     public Task<ChzzkResponse<T>> SendClientAsync<T>(HttpMethod method, string path, Query? query = null, object? body = null, CancellationToken ct = default)
-        => SendCoreAsync<ChzzkResponse<T>>(method, path, query, body, SetClientHeaders, ct);
+        => SendWithRulesAsync<ChzzkResponse<T>>(method, path, query, body, SetClientHeaders, ct: ct);
 
     public Task<ChzzkResponse> SendClientAsync(HttpMethod method, string path, Query? query = null, object? body = null, CancellationToken ct = default)
-        => SendCoreAsync<ChzzkResponse>(method, path, query, body, SetClientHeaders, ct);
+        => SendWithRulesAsync<ChzzkResponse>(method, path, query, body, SetClientHeaders, ct: ct);
 
     private void SetClientHeaders(HttpRequestHeaders headers)
     {
@@ -143,7 +206,7 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
         where T : ChzzkResponse
         => SendCoreAsync<T>(HttpMethod.Post, uri, null, requestBody, null, ct);
 
-    public async Task<ChzzkUser> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
+    public Task<ChzzkResponse<TokenContent>> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
     {
         var requestBody = new
         {
@@ -154,15 +217,20 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
             state
         };
 
-        var wrapper = await PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct);
+        return PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct);
+    }
 
-        if (wrapper.Code != HttpStatusCode.OK)
-            throw new ChzzkApiException(wrapper);
+    public async Task<ChzzkUser> CreateUserAsync(string code, string state, CancellationToken ct = default)
+    {
+        var response = await IssueAccessTokenAsync(code, state, ct);
+
+        if (response.Code != HttpStatusCode.OK || response.Content is null)
+            throw new ChzzkApiException(response);
 
         return new(this, new ChzzkUser.ChzzkToken
         {
-            AccessToken = wrapper.Content!.AccessToken,
-            RefreshToken = wrapper.Content.RefreshToken
+            AccessToken = response.Content.AccessToken,
+            RefreshToken = response.Content.RefreshToken
         });
     }
 
@@ -198,14 +266,17 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     public async Task<ChzzkResponse<SessionListData>> GetSessionListAsync(int size = 20, string page = "0", CancellationToken ct = default)
         => await SendClientAsync<SessionListData>(HttpMethod.Get, "/open/v1/sessions/client", [new("size", size.ToString()), new("page", page)], ct: ct);
 
+    public Task<ChzzkResponse<SessionCreateContent>> GetSessionUrlAsync(CancellationToken ct = default)
+        => SendClientAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth/client", ct: ct);
+
     public async Task<ChzzkSession> CreateSessionAsync(CancellationToken ct = default)
     {
-        var response = await SendClientAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth/client", ct: ct);
+        var response = await GetSessionUrlAsync(ct);
 
-        if (response.Code != HttpStatusCode.OK)
+        if (response.Code != HttpStatusCode.OK || response.Content is null)
             throw new ChzzkApiException(response);
 
-        return new ChzzkSession(new Uri(response.Content!.Url));
+        return new ChzzkSession(new Uri(response.Content.Url));
     }
 
     #endregion Session
