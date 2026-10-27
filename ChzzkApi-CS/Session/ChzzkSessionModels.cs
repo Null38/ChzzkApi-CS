@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace ChzzkApi.Session;
@@ -15,10 +15,15 @@ public record EventData(
 
 public record SessionCreateContent(
     [property: JsonPropertyName("url")] string Url);
-
 public record SystemMessage(
-    [property: JsonPropertyName("type")] string Type,
-    [property: JsonPropertyName("data")] JsonElement Data);
+    [property: JsonPropertyName("type")] SystemMessageType Type,
+    [property: JsonPropertyName("data")] SystemData Data);
+
+public record SystemData(
+    [property: JsonPropertyName("sessionKey")] string? SessionKey,
+    [property: JsonPropertyName("eventType")] EventType? EventType,
+    [property: JsonPropertyName("channelId")] string? ChannelId);
+
 
 public record Badge(
     [property: JsonPropertyName("imageUrl")] string? ImageUrl);
@@ -55,6 +60,15 @@ public record SubscriptionMessage(
     [property: JsonPropertyName("tierNo")] int TierNo,
     [property: JsonPropertyName("tierName")] string TierName,
     [property: JsonPropertyName("month")] int Month);
+
+[JsonConverter(typeof(JsonStringEnumConverter<SystemMessageType>))]
+public enum SystemMessageType
+{
+    [JsonStringEnumMemberName("connected")] Connected,
+    [JsonStringEnumMemberName("subscribed")] Subscribed,
+    [JsonStringEnumMemberName("unsubscribed")] Unsubscribed,
+    [JsonStringEnumMemberName("revoked")] Revoked
+}
 
 [JsonConverter(typeof(JsonStringEnumConverter<EventType>))]
 public enum EventType

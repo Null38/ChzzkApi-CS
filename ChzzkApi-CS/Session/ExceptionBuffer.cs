@@ -63,15 +63,29 @@ public sealed class ExceptionBuffer : IEnumerable<ExceptionInfo>
     {
         var handler = exceptionOccurred;
 
-        if (handler is not null)
+        if (handler is null)
         {
-            handler(exceptionInfo);
+            Enqueue(exceptionInfo);
             return;
         }
 
+        try
+        {
+            handler(exceptionInfo);
+        }
+        catch (Exception ex)
+        {
+            Enqueue(exceptionInfo, new ExceptionInfo(DateTimeOffset.UtcNow, "exceptionOccurred", ex));
+        }
+    }
+
+    void Enqueue(params ReadOnlySpan<ExceptionInfo> exceptionInfos)
+    {
         lock (gate)
         {
-            exceptions.Enqueue(exceptionInfo);
+            foreach (var exceptionInfo in exceptionInfos)
+                exceptions.Enqueue(exceptionInfo);
+
             DiscardOverflow();
         }
     }

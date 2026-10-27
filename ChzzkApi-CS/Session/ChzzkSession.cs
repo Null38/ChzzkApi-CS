@@ -1,6 +1,6 @@
-using Microsoft.AspNetCore.WebUtilities;
 using SocketIOClient;
 using System.Text.Json;
+using System.Threading.Channels;
 using System.Web;
 
 namespace ChzzkApi.Session;
@@ -11,6 +11,8 @@ public class ChzzkSession : IAsyncDisposable
 
     readonly SocketIO socket;
     readonly TaskCompletionSource<string> connectTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    readonly Channel<Func<Task>> queue = Channel.CreateUnbounded<Func<Task>>(new UnboundedChannelOptions { SingleReader = true });
 
     public bool IsConnected => socket.Connected;
 
@@ -24,13 +26,11 @@ public class ChzzkSession : IAsyncDisposable
 
     public ExceptionBuffer Exceptions { get; } = [];
 
-    public event Action<string>? Disconnected;
-    public event Action<EventData>? EventSubscribed;
-    public event Action<EventData>? EventUnsubscribed;
-    public event Action<EventData>? EventRevoked;
-    public event Action<ChatMessage>? ChatReceived;
-    public event Action<DonationMessage>? DonationReceived;
-    public event Action<SubscriptionMessage>? SubscriptionReceived;
+    public event Func<string, Task>? Disconnected;
+    public event Func<(SystemMessageType MessageType, EventData Data), Task>? EventSubscriptionChanged;
+    public event Func<ChatMessage, Task>? ChatReceived;
+    public event Func<DonationMessage, Task>? DonationReceived;
+    public event Func<SubscriptionMessage, Task>? SubscriptionReceived;
 
     internal ChzzkSession(Uri uri)
     {
@@ -48,9 +48,11 @@ public class ChzzkSession : IAsyncDisposable
         socket.OnError += OnError;
 
         socket.On("SYSTEM", OnSystem);
-        socket.On("CHAT", response => Dispatch("CHAT", response, ChatReceived));
-        socket.On("DONATION", response => Dispatch("DONATION", response, DonationReceived));
-        socket.On("SUBSCRIPTION", response => Dispatch("SUBSCRIPTION", response, SubscriptionReceived));
+        socket.On("CHAT", response => Dispatch("[Chat]", response, ChatReceived));
+        socket.On("DONATION", response => Dispatch("[Donation]", response, DonationReceived));
+        socket.On("SUBSCRIPTION", response => Dispatch("[Subscription]", response, SubscriptionReceived));
+
+        _ = RunQueueAsync();
     }
 
     public async Task ConnectAsync(CancellationToken ct = default)
@@ -88,6 +90,8 @@ public class ChzzkSession : IAsyncDisposable
         socket.OnError -= OnError;
 
         socket.Dispose();
+
+        queue.Writer.TryComplete();
     }
 
     public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUser userApi, EventType eventType, CancellationToken ct = default)
@@ -95,9 +99,7 @@ public class ChzzkSession : IAsyncDisposable
         if (!socket.Connected)
             throw new InvalidOperationException("The session isn't connected.");
 
-        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/subscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
-
-        return userApi.SendUserAsync(HttpMethod.Post, uri, null, ct: ct);
+        return userApi.SendUserAsync(HttpMethod.Post, $"/open/v1/sessions/events/subscribe/{eventType.ToPathSegment()}", query: [new ("sessionKey", SessionKey)], ct: ct);
     }
 
     public Task<ChzzkResponse> UnsubscribeEventAsync(ChzzkUser userApi, EventType eventType, CancellationToken ct = default)
@@ -105,9 +107,7 @@ public class ChzzkSession : IAsyncDisposable
         if (!socket.Connected)
             throw new InvalidOperationException("The session isn't connected.");
 
-        string uri = QueryHelpers.AddQueryString($"/open/v1/sessions/events/unsubscribe/{eventType.ToPathSegment()}", "sessionKey", SessionKey);
-
-        return userApi.SendUserAsync(HttpMethod.Post, uri, null, ct: ct);
+        return userApi.SendUserAsync(HttpMethod.Post, $"/open/v1/sessions/events/unsubscribe/{eventType.ToPathSegment()}", query: [new("sessionKey", SessionKey)], ct: ct);
     }
 
     void OnDisconnected(object? sender, string reason)
@@ -129,65 +129,57 @@ public class ChzzkSession : IAsyncDisposable
             Report("socketIO", exception);
     }
 
+    const string SystemSource = "[System]";
+
     Task OnSystem(IEventContext response)
     {
-        if (Parse<SystemMessage>(response, "SYSTEM") is not SystemMessage message)
-        {
+        if (Parse<SystemMessage>(response, SystemSource) is not SystemMessage message)
             return Task.CompletedTask;
-        }
-
-        if (message.Type == "connected")
-        {
-            CompleteConnect(message.Data);
-            return Task.CompletedTask;
-
-        }
-
-        if (Parse<EventData>(message.Data, "SYSTEM") is not EventData eventData)
-        {
-            return Task.CompletedTask;
-        }
 
         switch (message.Type)
         {
-            case "subscribed":
-                Raise("[SYSTEM] subscribed", EventSubscribed, eventData);
+            case SystemMessageType.Connected:
+                if (message.Data.SessionKey is null)
+                {
+                    connectTcs.TrySetException(new JsonException($"The connected frame carried no sessionKey:\n{response.RawText}"));
+                    break;
+                }
+
+                connectTcs.TrySetResult(message.Data.SessionKey);
                 break;
-            case "unsubscribed":
-                Raise("[SYSTEM] unsubscribed", EventUnsubscribed, eventData);
-                break;
-            case "revoked":
-                Raise("[SYSTEM] revoked", EventRevoked, eventData);
+            case SystemMessageType.Subscribed:
+            case SystemMessageType.Unsubscribed:
+            case SystemMessageType.Revoked:
+                if (message.Data.EventType is null)
+                {
+                    Report(SystemSource, new JsonException($"The {message.Type} frame carried no EventType:\n{response.RawText}"));
+                    break;
+                }
+
+                if (message.Data.ChannelId is null)
+                {
+                    Report(SystemSource, new JsonException($"The {message.Type} frame carried no ChannelId:\n{response.RawText}"));
+                    break;
+                }
+
+
+                Raise(SystemSource, EventSubscriptionChanged, (message.Type, new EventData(message.Data.EventType.Value, message.Data.ChannelId)));
                 break;
         }
 
         return Task.CompletedTask;
     }
 
-    void CompleteConnect(JsonElement data)
-    {
-        if (data.TryGetProperty("sessionKey", out var key) && key.GetString() is string sessionKey)
-            connectTcs.TrySetResult(sessionKey);
-        else
-            connectTcs.TrySetException(new JsonException("The connected frame carried no sessionKey."));
-    }
     T? Parse<T>(IEventContext response, string source)
     {
         try
         {
-            return JsonSerializer.Deserialize<T>(response.GetValue<JsonElement>(0).GetString()!);
-        }
-        catch (Exception ex)
-        {
-            Report(source, ex);
-            return default;
-        }
-    }
-    T? Parse<T>(JsonElement element, string source)
-    {
-        try
-        {
-            return element.Deserialize<T>();
+            var payload = JsonSerializer.Deserialize<T>(response.GetValue<string>(0) ?? string.Empty);
+
+            if (payload is null)
+                Report(source, new JsonException($"The {typeof(T).Name} frame deserialized to null:\n{response.RawText}"));
+
+            return payload;
         }
         catch (Exception ex)
         {
@@ -196,34 +188,41 @@ public class ChzzkSession : IAsyncDisposable
         }
     }
 
-    Task Dispatch<T>(string source, IEventContext response, Action<T>? handler)
+    Task Dispatch<T>(string source, IEventContext response, Func<T, Task>? handler)
     {
         if (Parse<T>(response, source) is not T payload)
-        {
             return Task.CompletedTask;
-        }
 
         Raise(source, handler, payload);
 
         return Task.CompletedTask;
     }
 
-    void Raise<T>(string source, Action<T>? handler, T? message)
+    void Raise<T>(string source, Func<T, Task>? handler, T message)
     {
         if (handler is null || message is null)
             return;
 
-        foreach (var subscriber in handler.GetInvocationList().Cast<Action<T>>())
+        queue.Writer.TryWrite(async () =>
         {
-            try
+            foreach (var subscriber in handler.GetInvocationList().Cast<Func<T, Task>>())
             {
-                subscriber(message);
+                try
+                {
+                    await subscriber(message);
+                }
+                catch (Exception ex)
+                {
+                    Report(source, ex);
+                }
             }
-            catch (Exception ex)
-            {
-                Report(source, ex);
-            }
-        }
+        });
+    }
+
+    async Task RunQueueAsync()
+    {
+        await foreach (var work in queue.Reader.ReadAllAsync())
+            await work();
     }
 
     void Report(string source, Exception exception)
