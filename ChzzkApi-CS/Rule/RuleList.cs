@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 
-namespace ChzzkApi;
+namespace ChzzkApi_CS.Rule;
 
 public class RuleEntry
 {

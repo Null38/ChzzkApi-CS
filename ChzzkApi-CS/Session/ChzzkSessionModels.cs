@@ -3,14 +3,11 @@ using System.Text.Json.Serialization;
 
 namespace ChzzkApi.Session;
 
-public record SessionListData(
-    [property: JsonPropertyName("data")] List<SessionInfo> Data);
-
 public record SessionInfo(
     [property: JsonPropertyName("sessionKey")] string SessionKey,
     [property: JsonPropertyName("connectedDate")] string ConnectedDate,
     [property: JsonPropertyName("disconnectedDate")] string DisconnectedDate,
-    [property: JsonPropertyName("subscribedEvents")] List<EventData> SubscribedEvents);
+    [property: JsonPropertyName("subscribedEvents")] IReadOnlyList<EventData> SubscribedEvents);
 
 public record EventData(
     [property: JsonPropertyName("eventType")] EventType EventType,
@@ -28,7 +25,7 @@ public record Badge(
 
 public record ChatProfile(
     [property: JsonPropertyName("nickname")] string Nickname,
-    [property: JsonPropertyName("badges")] List<Badge> Badges,
+    [property: JsonPropertyName("badges")] IReadOnlyList<Badge> Badges,
     [property: JsonPropertyName("verifiedMark")] bool VerifiedMark,
     [property: JsonPropertyName("userRoleCode")] UserRoleCode UserRoleCode);
 
@@ -38,7 +35,7 @@ public record ChatMessage(
     [property: JsonPropertyName("chatChannelId")] string ChatChannelId,
     [property: JsonPropertyName("profile")] ChatProfile Profile,
     [property: JsonPropertyName("content")] string Content,
-    [property: JsonPropertyName("emojis")] Dictionary<string, string> Emojis,
+    [property: JsonPropertyName("emojis")] IReadOnlyDictionary<string, string> Emojis,
     [property: JsonPropertyName("messageTime")] long MessageTime,
     [property: JsonPropertyName("eventSentAt")] string EventSentAt);
 
@@ -49,7 +46,7 @@ public record DonationMessage(
     [property: JsonPropertyName("donatorNickname")] string DonatorNickname,
     [property: JsonPropertyName("payAmount")] string PayAmount,
     [property: JsonPropertyName("donationText")] string DonationText,
-    [property: JsonPropertyName("emojis")] Dictionary<string, string> Emojis);
+    [property: JsonPropertyName("emojis")] IReadOnlyDictionary<string, string> Emojis);
 
 public record SubscriptionMessage(
     [property: JsonPropertyName("channelId")] string ChannelId,

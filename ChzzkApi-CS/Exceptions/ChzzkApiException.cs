@@ -1,6 +1,7 @@
-﻿using System.Net;
+﻿using ChzzkApi;
+using System.Net;
 
-namespace ChzzkApi;
+namespace ChzzkApi_CS.Exceptions;
 
 public enum ChzzkAuthError
 {

@@ -1,6 +1,8 @@
-﻿global using Query = System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string?>>;
+global using Query = System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string?>>;
 
 using ChzzkApi.Session;
+using ChzzkApi_CS.Exceptions;
+using ChzzkApi_CS.Rule;
 using Microsoft.AspNetCore.WebUtilities;
 using System.Collections.Specialized;
 using System.Net;
@@ -224,12 +226,12 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     {
         var response = await IssueAccessTokenAsync(code, state, ct);
 
-        if (response.Code != HttpStatusCode.OK || response.Content is null)
+        if (response.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(response);
 
         return new(this, new ChzzkUser.ChzzkToken
         {
-            AccessToken = response.Content.AccessToken,
+            AccessToken = response.Content!.AccessToken,
             RefreshToken = response.Content.RefreshToken
         });
     }
@@ -263,8 +265,8 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     #endregion Authorization
     #region Session
 
-    public async Task<ChzzkResponse<SessionListData>> GetSessionListAsync(int size = 20, string page = "0", CancellationToken ct = default)
-        => await SendClientAsync<SessionListData>(HttpMethod.Get, "/open/v1/sessions/client", [new("size", size.ToString()), new("page", page)], ct: ct);
+    public Task<ChzzkResponse<ChzzkPage<SessionInfo>>> GetSessionsAsync(int? size = null, int page = 0, CancellationToken ct = default)
+        => SendClientAsync<ChzzkPage<SessionInfo>>(HttpMethod.Get, "/open/v1/sessions/client", [new("size", size?.ToString()), new("page", page.ToString())], ct: ct);
 
     public Task<ChzzkResponse<SessionCreateContent>> GetSessionUrlAsync(CancellationToken ct = default)
         => SendClientAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth/client", ct: ct);
@@ -273,10 +275,10 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     {
         var response = await GetSessionUrlAsync(ct);
 
-        if (response.Code != HttpStatusCode.OK || response.Content is null)
+        if (response.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(response);
 
-        return new ChzzkSession(new Uri(response.Content.Url));
+        return new ChzzkSession(new Uri(response.Content!.Url));
     }
 
     #endregion Session

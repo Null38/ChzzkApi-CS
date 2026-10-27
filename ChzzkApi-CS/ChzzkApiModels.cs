@@ -39,3 +39,16 @@ public record UserInfo(
 
 public record ChatMessageContent(
     [property: JsonPropertyName("messageId")] string MessageId);
+
+public record ChzzkPage<T>(
+    [property: JsonPropertyName("page")] int Page,
+    [property: JsonPropertyName("totalCount")] int TotalCount,
+    [property: JsonPropertyName("totalPages")] int TotalPages,
+    [property: JsonPropertyName("data")] IReadOnlyList<T> Data);
+
+public record ChzzkCursorPage<T>(
+    [property: JsonPropertyName("page")] ChzzkCursor Page,
+    [property: JsonPropertyName("data")] IReadOnlyList<T> Data);
+
+public record ChzzkCursor(
+    [property: JsonPropertyName("next")] string? Next);

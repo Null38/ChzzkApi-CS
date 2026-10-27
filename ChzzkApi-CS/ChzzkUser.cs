@@ -1,4 +1,6 @@
 using ChzzkApi.Session;
+using ChzzkApi_CS.Exceptions;
+using ChzzkApi_CS.Rule;
 using System.Net;
 using System.Net.Http.Headers;
 using static ChzzkApi.ChzzkUser;
@@ -95,8 +97,8 @@ public class ChzzkUser(ChzzkClient clientApi, ChzzkToken token)
     #endregion Authorization
     #region Session
 
-    public Task<ChzzkResponse<SessionListData>> GetSessionListAsync(int size = 20, string page = "0", CancellationToken ct = default)
-        => SendUserAsync<SessionListData>(HttpMethod.Get, "/open/v1/sessions", [new("size", size.ToString()), new("page", page)], ct: ct);
+    public Task<ChzzkResponse<ChzzkPage<SessionInfo>>> GetSessionsAsync(int? size = null, int page = 0, CancellationToken ct = default)
+        => SendUserAsync<ChzzkPage<SessionInfo>>(HttpMethod.Get, "/open/v1/sessions", [new("size", size?.ToString()), new("page", page.ToString())], ct: ct);
 
     public Task<ChzzkResponse<SessionCreateContent>> GetSessionUrlAsync(CancellationToken ct = default)
         => SendUserAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth", ct: ct);
@@ -105,10 +107,10 @@ public class ChzzkUser(ChzzkClient clientApi, ChzzkToken token)
     {
         var response = await GetSessionUrlAsync(ct);
 
-        if (response.Code != HttpStatusCode.OK || response.Content is null)
+        if (response.Code != HttpStatusCode.OK)
             throw new ChzzkApiException(response);
 
-        return new ChzzkSession(new Uri(response.Content.Url));
+        return new ChzzkSession(new Uri(response.Content!.Url));
     }
 
     #endregion Session

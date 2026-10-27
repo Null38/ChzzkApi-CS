@@ -12,12 +12,19 @@ public class ChzzkSession : IAsyncDisposable
     readonly SocketIO socket;
     readonly TaskCompletionSource<string> connectTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    public bool IsConnected => socket.Connected;
+
     bool isConnectStarted = false;
+    volatile bool isClosing = false;
+
+    readonly Lock closeGate = new();
+    Task? closeTask;
 
     public string SessionKey { get; private set; } = string.Empty;
 
     public ExceptionBuffer Exceptions { get; } = [];
 
+    public event Action<string>? Disconnected;
     public event Action<EventData>? EventSubscribed;
     public event Action<EventData>? EventUnsubscribed;
     public event Action<EventData>? EventRevoked;
@@ -51,19 +58,37 @@ public class ChzzkSession : IAsyncDisposable
         if (Interlocked.Exchange(ref isConnectStarted, true) == true)
             throw new InvalidOperationException("This session was already connected. Create a new session to connect again.");
 
-        await socket.ConnectAsync(ct);
-
         try
         {
-            SessionKey = await connectTcs.Task.WaitAsync(ct);
+            await socket.ConnectAsync(ct);
+            SessionKey = await connectTcs.Task.WaitAsync(ConnectionTimeout, ct);
         }
-        catch (OperationCanceledException)
+        catch
         {
-            await DisposeAsync();
+            await DisconnectAsync(CancellationToken.None);
+            throw;
         }
     }
 
-    public Task DisconnectAsync(CancellationToken ct = default) => socket.DisconnectAsync(ct);
+    public Task DisconnectAsync(CancellationToken ct = default)
+    {
+        lock (closeGate)
+            return (closeTask ??= CloseCoreAsync()).WaitAsync(ct);
+    }
+
+    async Task CloseCoreAsync()
+    {
+        isClosing = true;
+        connectTcs.TrySetException(new ObjectDisposedException(nameof(ChzzkSession)));
+
+        if (socket.Connected)
+            await socket.DisconnectAsync();
+
+        socket.OnDisconnected -= OnDisconnected;
+        socket.OnError -= OnError;
+
+        socket.Dispose();
+    }
 
     public Task<ChzzkResponse> SubscribeEventAsync(ChzzkUser userApi, EventType eventType, CancellationToken ct = default)
     {
@@ -86,7 +111,15 @@ public class ChzzkSession : IAsyncDisposable
     }
 
     void OnDisconnected(object? sender, string reason)
-        => connectTcs.TrySetException(new IOException($"Session disconnected before a session key was issued: {reason}"));
+    {
+        if (connectTcs.TrySetException(new IOException($"Session disconnected before a session key was issued: {reason}")))
+            return;
+
+        if (isClosing)
+            return;
+
+        Raise("disconnected", Disconnected, reason);
+    }
 
     void OnError(object? sender, string message)
     {
@@ -198,14 +231,9 @@ public class ChzzkSession : IAsyncDisposable
         Exceptions.Add(new ExceptionInfo(DateTimeOffset.UtcNow, source, exception));
     }
 
-    public async ValueTask DisposeAsync()
+    async ValueTask IAsyncDisposable.DisposeAsync()
     {
-        socket.OnDisconnected -= OnDisconnected;
-        socket.OnError -= OnError;
-
-        if (socket.Connected)
-            await socket.DisconnectAsync();
-        
-        socket.Dispose();
+        await DisconnectAsync();
+        GC.SuppressFinalize(this);
     }
 }
