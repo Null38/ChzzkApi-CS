@@ -1,8 +1,11 @@
 using ChzzkApi;
-using ChzzkApi.Session;
 using ChzzkApi.Extensions;
+using ChzzkApi.Exceptions;
+using ChzzkApi.Models;
+using ChzzkApi.Rule;
 using Microsoft.Extensions.DependencyInjection;
 using System.Diagnostics;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -24,7 +27,6 @@ internal static class Program
     static ChzzkClient clientApi;
     static ChzzkUser? userApi;
     static AppConfig config;
-    static readonly HashSet<string> pendingEchoes = [];
 
     static Program()
     {
@@ -42,8 +44,14 @@ internal static class Program
             config.ClientId,
             config.ClientSecret);
 
+        clientApi.Rules.Add(null, OnResponseAsync);
+
         if (config.AccessToken != null)
-            userApi = new ChzzkUser(clientApi, config.AccessToken, config.RefreshToken ?? string.Empty);
+            userApi = new ChzzkUser(clientApi, new ChzzkUser.ChzzkToken
+            {
+                AccessToken = config.AccessToken,
+                RefreshToken = config.RefreshToken ?? string.Empty
+            });
     }
 
     static async Task Main(string[] args)
@@ -51,109 +59,71 @@ internal static class Program
         if (userApi is null)
             await RunOAuthFlowAsync();
 
-        Console.WriteLine($"Access Token: {userApi!.AccessToken}");
-
-        await CallWithAuthAsync(() => userApi.GetUserInfoAsync());
-
-        var session = await userApi.CreateSessionAsync();
-        await session.ConnectAsync();
-
-        var subscribeRes = await CallWithAuthAsync(() => session.SubscribeEventAsync(userApi, EventType.Chat));
-        Console.WriteLine($"Subscribe: {subscribeRes.Code} {subscribeRes.Message}");
-
-        session.Exceptions.SetExceptionOccurred(error
-            => Console.WriteLine($"[{error.Exception.Data[ExceptionInfo.HandlingContextDataKey]}] {error.Exception.GetType().Name}: {error.Exception.Message}"));
-
-        // Handlers run on the receive thread, so the echo is offloaded rather than awaited here.
-        // An async lambda would compile as async void and lose the send failure.
-        session.ChatReceived += (msg) =>
+        var session = await userApi!.CreateSessionAsync();
+        session.ChatReceived += chat =>
         {
-            Console.WriteLine($"{msg.Content}");
-
-            if (msg.ChannelId == msg.SenderChannelId && pendingEchoes.Remove(msg.Content))
-                return;
-
-            pendingEchoes.Add(msg.Content);
-
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await userApi.PostChatMessageAsync(msg.Content);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Echo failed: {ex.Message}");
-                }
-            });
+            Console.WriteLine($"[CHAT] {chat.Profile.Nickname}: {chat.Content}");
+            return Task.CompletedTask;
         };
 
-        var sessions = await userApi.GetSessionListAsync();
-        if (sessions.Code == ChzzkStatusCode.Success)
-        {
-            Console.WriteLine("=== User Sessions ===");
-            foreach (var s in sessions.Content!.Data)
-            {
-                Console.WriteLine($"Key: {s.SessionKey,14}");
-                Console.WriteLine($"Connected: {s.ConnectedDate,14}");
-                Console.WriteLine($"Disconnected: {s.DisconnectedDate,14}");
-                foreach (var ev in s.SubscribedEvents)
-                    Console.WriteLine($"   Event: {ev.EventType} / Channel: {ev.ChannelId}");
-            }
-        }
+        await session.ConnectAsync();
+        Console.WriteLine($"Connected: {session.SessionKey}");
 
-        Console.WriteLine("Press 'q' to quit.");
-        while (Console.ReadLine()?.Equals("q", StringComparison.OrdinalIgnoreCase) != true) { }
+        var subscribed = await session.SubscribeEventAsync(userApi, EventType.Chat);
+        Console.WriteLine($"Subscribe CHAT: {(int)subscribed.Code} {subscribed.Message}");
 
-        await CallWithAuthAsync(() => session.UnsubscribeEventAsync(userApi, EventType.Chat));
-        await session.DisposeAsync();
+        Console.WriteLine("Press Enter to disconnect.");
+        Console.ReadLine();
+
+        await session.DisconnectAsync();
+
+        foreach (var info in session.Exceptions)
+            Console.WriteLine($"[EXCEPTION] {info.TimeUtc:O} {info.Exception}");
     }
 
+    static async Task OnResponseAsync(ChzzkRuleContext ctx, CancellationToken ct)
+    {
+        switch (ctx.Response.Code)
+        {
+            case HttpStatusCode.OK:
+                break;
+            case HttpStatusCode.Unauthorized when ctx.User is not null:
+                if (ReferenceEquals(ctx.SentToken, ctx.User.Token))
+                {
+                    var refreshed = await ctx.User.RefreshAccessTokenAsync(ct);
+                    if (refreshed.Code != HttpStatusCode.OK)
+                        return;
+
+                    UpdateTokens();
+                }
+
+                await ctx.ResendAsync(ct);
+                break;
+            default:
+                throw new ChzzkApiException(ctx.Response);
+        }
+    }
     static void UpdateTokens()
     {
-        if (userApi != null)
+        if (userApi is null)
             return;
 
         config = config with
         {
-            AccessToken = userApi!.AccessToken,
-            RefreshToken = userApi.RefreshToken
+            AccessToken = userApi!.Token.AccessToken,
+            RefreshToken = userApi.Token.RefreshToken
         };
         SaveJson(ConfigFile, config);
     }
 
     static async Task RunOAuthFlowAsync()
     {
-        var authUri = clientApi.GetAuthorizationUri(RedirectUri, out string state);
+        var authUri = clientApi.BuildAuthUrl(RedirectUri, out string state);
+        var codeTask = ChzzkClient.WaitForAuthCodeAsync(RedirectUri, state);
         OpenUrl(authUri);
-        var code = await ChzzkClient.WaitForAuthorizationCodeAsync(RedirectUri, state);
 
-        userApi = await clientApi.IssueAccessTokenAsync(code, state);
+        userApi = await clientApi.CreateUserAsync(await codeTask, state);
         UpdateTokens();
-    }
-
-    static async Task<T> CallWithAuthAsync<T>(Func<Task<T>> apiCall)
-        where T : ChzzkResponse
-    {
-        var response = await apiCall();
-
-        if (response.Code == ChzzkStatusCode.Success)
-            return response;
-        if (response.Code != ChzzkStatusCode.Unauthorized)
-            throw new ChzzkApiException(response);
-
-        var refreshed = await userApi!.RefreshAccessTokenAsync();
-
-        if (refreshed.Code == ChzzkStatusCode.Success)
-        {
-            UpdateTokens();
-            return await apiCall();
-        }
-        if (refreshed.Code != ChzzkStatusCode.Unauthorized)
-            throw new ChzzkApiException(refreshed);
-
-        await RunOAuthFlowAsync();
-        return await apiCall();
     }
 
     static AppConfig CreateDefaultConfig(string path)
