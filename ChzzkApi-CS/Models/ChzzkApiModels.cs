@@ -1,8 +1,8 @@
-﻿using System.Net;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ChzzkApi;
+namespace ChzzkApi.Models;
 
 public record ChzzkResponse(
     [property: JsonPropertyName("code")] HttpStatusCode Code,
@@ -14,7 +14,7 @@ public record ChzzkResponse(
     internal static T? Parse<T>(string raw)
         where T : ChzzkResponse
     {
-        T? result = JsonSerializer.Deserialize<T>(raw);
+        T? result = JsonSerializer.Deserialize<T>(raw, ChzzkJson.Options);
         if (result is not null)
             result.Raw = raw;
 

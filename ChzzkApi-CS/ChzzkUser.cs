@@ -1,6 +1,7 @@
 using ChzzkApi.Session;
-using ChzzkApi_CS.Exceptions;
-using ChzzkApi_CS.Rule;
+using ChzzkApi.Exceptions;
+using ChzzkApi.Models;
+using ChzzkApi.Rule;
 using System.Net;
 using System.Net.Http.Headers;
 using static ChzzkApi.ChzzkUser;

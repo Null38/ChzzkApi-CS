@@ -1,8 +1,9 @@
 global using Query = System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string?>>;
 
 using ChzzkApi.Session;
-using ChzzkApi_CS.Exceptions;
-using ChzzkApi_CS.Rule;
+using ChzzkApi.Exceptions;
+using ChzzkApi.Models;
+using ChzzkApi.Rule;
 using Microsoft.AspNetCore.WebUtilities;
 using System.Collections.Specialized;
 using System.Net;

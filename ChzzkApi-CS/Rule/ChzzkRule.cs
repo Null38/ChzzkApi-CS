@@ -1,6 +1,7 @@
 using ChzzkApi;
+using ChzzkApi.Models;
 
-namespace ChzzkApi_CS.Rule;
+namespace ChzzkApi.Rule;
 
 public delegate Task ChzzkRule(ChzzkRuleContext context, CancellationToken ct);
 

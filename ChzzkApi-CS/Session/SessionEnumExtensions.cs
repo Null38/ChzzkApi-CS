@@ -1,4 +1,6 @@
-﻿namespace ChzzkApi.Session;
+using ChzzkApi.Models;
+
+namespace ChzzkApi.Session;
 
 public static class SessionEnumExtensions
 {

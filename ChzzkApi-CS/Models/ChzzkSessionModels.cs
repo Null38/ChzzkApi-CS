@@ -1,7 +1,6 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ChzzkApi.Session;
+namespace ChzzkApi.Models;
 
 public record SessionInfo(
     [property: JsonPropertyName("sessionKey")] string SessionKey,
@@ -15,6 +14,7 @@ public record EventData(
 
 public record SessionCreateContent(
     [property: JsonPropertyName("url")] string Url);
+
 public record SystemMessage(
     [property: JsonPropertyName("type")] SystemMessageType Type,
     [property: JsonPropertyName("data")] SystemData Data);
@@ -23,7 +23,6 @@ public record SystemData(
     [property: JsonPropertyName("sessionKey")] string? SessionKey,
     [property: JsonPropertyName("eventType")] EventType? EventType,
     [property: JsonPropertyName("channelId")] string? ChannelId);
-
 
 public record Badge(
     [property: JsonPropertyName("imageUrl")] string? ImageUrl);
@@ -34,6 +33,12 @@ public record ChatProfile(
     [property: JsonPropertyName("verifiedMark")] bool VerifiedMark,
     [property: JsonPropertyName("userRoleCode")] UserRoleCode UserRoleCode);
 
+public abstract record SessionMessage
+{
+    [JsonIgnore]
+    public string Raw { get; internal set; } = "";
+}
+
 public record ChatMessage(
     [property: JsonPropertyName("channelId")] string ChannelId,
     [property: JsonPropertyName("senderChannelId")] string SenderChannelId,
@@ -42,7 +47,7 @@ public record ChatMessage(
     [property: JsonPropertyName("content")] string Content,
     [property: JsonPropertyName("emojis")] IReadOnlyDictionary<string, string> Emojis,
     [property: JsonPropertyName("messageTime")] long MessageTime,
-    [property: JsonPropertyName("eventSentAt")] string EventSentAt);
+    [property: JsonPropertyName("eventSentAt")] string EventSentAt) : SessionMessage;
 
 public record DonationMessage(
     [property: JsonPropertyName("donationType")] string DonationType,
@@ -51,7 +56,7 @@ public record DonationMessage(
     [property: JsonPropertyName("donatorNickname")] string DonatorNickname,
     [property: JsonPropertyName("payAmount")] string PayAmount,
     [property: JsonPropertyName("donationText")] string DonationText,
-    [property: JsonPropertyName("emojis")] IReadOnlyDictionary<string, string> Emojis);
+    [property: JsonPropertyName("emojis")] IReadOnlyDictionary<string, string> Emojis) : SessionMessage;
 
 public record SubscriptionMessage(
     [property: JsonPropertyName("channelId")] string ChannelId,
@@ -59,7 +64,7 @@ public record SubscriptionMessage(
     [property: JsonPropertyName("subscriberNickname")] string SubscriberNickname,
     [property: JsonPropertyName("tierNo")] int TierNo,
     [property: JsonPropertyName("tierName")] string TierName,
-    [property: JsonPropertyName("month")] int Month);
+    [property: JsonPropertyName("month")] int Month) : SessionMessage;
 
 [JsonConverter(typeof(JsonStringEnumConverter<SystemMessageType>))]
 public enum SystemMessageType

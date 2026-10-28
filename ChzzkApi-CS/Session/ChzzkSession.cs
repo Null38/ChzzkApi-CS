@@ -1,3 +1,4 @@
+using ChzzkApi.Models;
 using SocketIOClient;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -162,7 +163,6 @@ public class ChzzkSession : IAsyncDisposable
                     break;
                 }
 
-
                 Raise(SystemSource, EventSubscriptionChanged, (message.Type, new EventData(message.Data.EventType.Value, message.Data.ChannelId)));
                 break;
         }
@@ -174,10 +174,14 @@ public class ChzzkSession : IAsyncDisposable
     {
         try
         {
-            var payload = JsonSerializer.Deserialize<T>(response.GetValue<string>(0) ?? string.Empty);
+            var raw = response.GetValue<string>(0) ?? string.Empty;
+            var payload = JsonSerializer.Deserialize<T>(raw, ChzzkJson.Options);
 
             if (payload is null)
                 Report(source, new JsonException($"The {typeof(T).Name} frame deserialized to null:\n{response.RawText}"));
+
+            if (payload is SessionMessage message)
+                message.Raw = raw;
 
             return payload;
         }

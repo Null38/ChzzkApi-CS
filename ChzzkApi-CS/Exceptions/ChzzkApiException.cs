@@ -1,7 +1,7 @@
-﻿using ChzzkApi;
+using ChzzkApi.Models;
 using System.Net;
 
-namespace ChzzkApi_CS.Exceptions;
+namespace ChzzkApi.Exceptions;
 
 public enum ChzzkAuthError
 {
@@ -11,19 +11,14 @@ public enum ChzzkAuthError
     InvalidToken
 }
 
-public class ChzzkApiException : Exception
+public class ChzzkApiException(ChzzkResponse response)
+    : Exception($"[{(int)response.Code}] {response.Code} : {response.Message ?? "Unknown error"}")
 {
     private const string InvalidClientMessage = "INVALID_CLIENT";
     private const string InvalidTokenMessage = "INVALID_TOKEN";
 
-    public ChzzkResponse Response { get; }
+    public ChzzkResponse Response { get; } = response;
     public HttpStatusCode StatusCode => Response.Code;
-
-    public ChzzkApiException(ChzzkResponse response)
-        : base($"[{(int)response.Code}] {response.Code} : {response.Message ?? "Unknown error"}")
-    {
-        Response = response;
-    }
 
     public ChzzkAuthError GetAuthError() => GetAuthError(Response);
 
@@ -41,30 +36,16 @@ public class ChzzkApiException : Exception
     }
 }
 
-public class ChzzkResponseException : Exception
+public class ChzzkResponseException(HttpStatusCode statusCode, string? body, Exception? innerException = null) 
+    : Exception($"[{(int)statusCode}] {statusCode} : Response is not a valid Chzzk envelope", innerException)
 {
-    public HttpStatusCode StatusCode { get; }
-    public string? Body { get; }
-
-    public ChzzkResponseException(HttpStatusCode statusCode, string? body, Exception? innerException = null)
-        : base($"[{(int)statusCode}] {statusCode} : Response is not a valid Chzzk envelope", innerException)
-    {
-        StatusCode = statusCode;
-        Body = body;
-    }
+    public HttpStatusCode StatusCode { get; } = statusCode;
+    public string? Body { get; } = body;
 }
 
-public class ChzzkAuthorizationException : Exception
+public class ChzzkAuthorizationException(string? error, string? errorDescription) 
+    : Exception(error is null ? "Authorization callback did not include a code" : $"Authorization failed: {error} : {errorDescription ?? "Unknown error"}")
 {
-    public string? Error { get; }
-    public string? ErrorDescription { get; }
-
-    public ChzzkAuthorizationException(string? error, string? errorDescription)
-        : base(error is null
-            ? "Authorization callback did not include a code"
-            : $"Authorization failed: {error} : {errorDescription ?? "Unknown error"}")
-    {
-        Error = error;
-        ErrorDescription = errorDescription;
-    }
+    public string? Error { get; } = error;
+    public string? ErrorDescription { get; } = errorDescription;
 }
