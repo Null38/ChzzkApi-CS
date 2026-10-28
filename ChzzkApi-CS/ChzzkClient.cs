@@ -140,7 +140,7 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
 
     #region Authorization
 
-    public string GetAuthorizationUri(string redirectUri, string state)
+    public string BuildAuthUrl(string redirectUri, string state)
     {
         return QueryHelpers.AddQueryString("https://chzzk.naver.com/account-interlock",
             new Dictionary<string, string?>
@@ -151,14 +151,14 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
             });
     }
 
-    public string GetAuthorizationUri(string redirectUri, out string state)
+    public string BuildAuthUrl(string redirectUri, out string state)
     {
         state = GetRandomString(12);
 
-        return GetAuthorizationUri(redirectUri, state);
+        return BuildAuthUrl(redirectUri, state);
     }
 
-    public static async Task<string> WaitForAuthorizationCodeAsync(
+    public static async Task<string> WaitForAuthCodeAsync(
         string redirectUri, 
         string expectedState,
         Func<HttpListenerResponse, NameValueCollection, Task>? configureResponse = null,
@@ -198,10 +198,8 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
             if (query["state"] != expectedState)
                 continue;
 
-            if (query["error"] is string error)
-                throw new InvalidOperationException($"Authorization was denied: {error} {query["error_description"]}".TrimEnd());
-
-            return query["code"]!;
+            return query["code"] 
+                ?? throw new ChzzkAuthorizationException(query);
         }
     }
 

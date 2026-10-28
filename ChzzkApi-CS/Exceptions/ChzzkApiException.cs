@@ -1,4 +1,5 @@
 using ChzzkApi.Models;
+using System.Collections.Specialized;
 using System.Net;
 
 namespace ChzzkApi.Exceptions;
@@ -43,9 +44,8 @@ public class ChzzkResponseException(HttpStatusCode statusCode, string? body, Exc
     public string? Body { get; } = body;
 }
 
-public class ChzzkAuthorizationException(string? error, string? errorDescription) 
-    : Exception(error is null ? "Authorization callback did not include a code" : $"Authorization failed: {error} : {errorDescription ?? "Unknown error"}")
+public class ChzzkAuthorizationException(NameValueCollection query)
+    : Exception("Authorization callback did not include a code")
 {
-    public string? Error { get; } = error;
-    public string? ErrorDescription { get; } = errorDescription;
+    public NameValueCollection Query { get; } = new(query);
 }
