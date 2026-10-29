@@ -38,6 +38,8 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
         public void Dispose() => inRule.Value = previous;
     }
 
+    #region Request Pipeline
+
     internal async Task<T> SendCoreAsync<T>(HttpMethod method, string path, Query? query, object? body,
         Action<HttpRequestHeaders>? setHeaders, CancellationToken ct = default)
         where T : ChzzkResponse
@@ -85,7 +87,7 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     {
         var token = user?.Token;
         var response = await SendCoreAsync<T>(method, path, query, body, setHeaders, ct);
-        
+
         if (inRule.Value)
             return response;
         inRule.Value = true;
@@ -138,6 +140,8 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
         headers.Add("Client-Secret", clientSecret);
     }
 
+    #endregion Request Pipeline
+
     #region Authorization
 
     public string BuildAuthUrl(string redirectUri, string state)
@@ -159,7 +163,7 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     }
 
     public static async Task<string> WaitForAuthCodeAsync(
-        string redirectUri, 
+        string redirectUri,
         string expectedState,
         Func<HttpListenerResponse, NameValueCollection, Task>? configureResponse = null,
         CancellationToken ct = default)
@@ -198,7 +202,7 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
             if (query["state"] != expectedState)
                 continue;
 
-            return query["code"] 
+            return query["code"]
                 ?? throw new ChzzkAuthorizationException(query);
         }
     }
@@ -265,10 +269,10 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     #region Session
 
     public Task<ChzzkResponse<ChzzkPage<SessionInfo>>> GetSessionsAsync(int? size = null, int page = 0, CancellationToken ct = default)
-        => SendClientAsync<ChzzkPage<SessionInfo>>(HttpMethod.Get, "/open/v1/sessions/client", [new("size", size?.ToString()), new("page", page.ToString())], ct: ct);
+        => SendClientAsync<ChzzkPage<SessionInfo>>(HttpMethod.Get, "/open/v1/sessions/client", query: [new("size", size?.ToString()), new("page", page.ToString())], ct: ct);
 
-    public Task<ChzzkResponse<SessionCreateContent>> GetSessionUrlAsync(CancellationToken ct = default)
-        => SendClientAsync<SessionCreateContent>(HttpMethod.Get, "/open/v1/sessions/auth/client", ct: ct);
+    public Task<ChzzkResponse<SessionUrlContent>> GetSessionUrlAsync(CancellationToken ct = default)
+        => SendClientAsync<SessionUrlContent>(HttpMethod.Get, "/open/v1/sessions/auth/client", ct: ct);
 
     public async Task<ChzzkSession> CreateSessionAsync(CancellationToken ct = default)
     {
@@ -281,9 +285,23 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     }
 
     #endregion Session
+    #region Channel
+
+    public Task<ChzzkResponse<ChzzkPage<ChannelInfo>>> GetChannelsInfoAsync(string[] channelIds, CancellationToken ct = default)
+        => SendClientAsync<ChzzkPage<ChannelInfo>> (HttpMethod.Get, "/open/v1/channels", query: channelIds.Select(id => new KeyValuePair<string, string?>("channelIds", id)), ct: ct);
+
+    #endregion Channel
     #region Category
+
+    public Task<ChzzkResponse<ChzzkPage<CategoryInfo>>> SearchCategoriesAsync(string query, int? size = null, CancellationToken ct = default)
+        => SendClientAsync<ChzzkPage<CategoryInfo>>(HttpMethod.Get, "/open/v1/categories/search", query: [new("size", size?.ToString()), new("query", query)], ct: ct);
+
     #endregion Category
     #region Live
+
+    public Task<ChzzkResponse<ChzzkCursorPage<LiveInfo>>> GetLivesAsync(int? size = null, string? next = null, CancellationToken ct = default)
+        => SendClientAsync<ChzzkCursorPage<LiveInfo>>(HttpMethod.Get, "/open/v1/lives", query: [new("size", size?.ToString()), new("next", next)], ct: ct);
+
     #endregion Live
 
     private static readonly char[] chars =
