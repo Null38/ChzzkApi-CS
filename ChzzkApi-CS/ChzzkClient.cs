@@ -1,4 +1,4 @@
-global using Query = System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string?>>;
+﻿global using Query = System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string?>>;
 
 using ChzzkApi.Session;
 using ChzzkApi.Exceptions;
@@ -16,11 +16,13 @@ namespace ChzzkApi;
 
 public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, string clientSecret)
 {
+    private sealed record Credentials(string Id, string Secret);
+
     private const string Path = "https://openapi.chzzk.naver.com";
 
     private IHttpClientFactory ClientFactory { get; init; } = clientFactory;
-    public string ClientId { get; } = clientId;
-    private readonly string clientSecret = clientSecret;
+    public string ClientId => credentials.Id;
+    private volatile Credentials credentials = new(clientId, clientSecret);
 
     private static readonly AsyncLocal<bool> inRule = new();
 
@@ -36,6 +38,11 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
     private class RuleScope(bool previous) : IDisposable
     {
         public void Dispose() => inRule.Value = previous;
+    }
+
+    public void SetCredentials(string clientId, string clientSecret)
+    {
+        credentials = new(clientId, clientSecret);
     }
 
     #region Request Pipeline
@@ -136,8 +143,10 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
 
     private void SetClientHeaders(HttpRequestHeaders headers)
     {
-        headers.Add("Client-Id", ClientId);
-        headers.Add("Client-Secret", clientSecret);
+        var current = credentials;
+
+        headers.Add("Client-Id", current.Id);
+        headers.Add("Client-Secret", current.Secret);
     }
 
     #endregion Request Pipeline
@@ -213,11 +222,12 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
 
     public Task<ChzzkResponse<TokenContent>> IssueAccessTokenAsync(string code, string state, CancellationToken ct = default)
     {
+        var current = credentials;
         var requestBody = new
         {
             grantType = "authorization_code",
-            clientId = ClientId,
-            clientSecret,
+            clientId = current.Id,
+            clientSecret = current.Secret,
             code,
             state
         };
@@ -241,12 +251,13 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
 
     public Task<ChzzkResponse<TokenContent>> RefreshAccessTokenAsync(string refreshToken, CancellationToken ct = default)
     {
+        var current = credentials;
         var requestBody = new
         {
             grantType = "refresh_token",
             refreshToken,
-            clientId = ClientId,
-            clientSecret
+            clientId = current.Id,
+            clientSecret = current.Secret
         };
 
         return PostAuthAsync<ChzzkResponse<TokenContent>>("/auth/v1/token", requestBody, ct);
@@ -254,10 +265,11 @@ public class ChzzkClient(IHttpClientFactory clientFactory, string clientId, stri
 
     public Task<ChzzkResponse> RevokeAccessTokenAsync(string token, string tokenTypeHint = "access_token", CancellationToken ct = default)
     {
+        var current = credentials;
         var requestBody = new
         {
-            clientId = ClientId,
-            clientSecret,
+            clientId = current.Id,
+            clientSecret = current.Secret,
             token,
             tokenTypeHint
         };
